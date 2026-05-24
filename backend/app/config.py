@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Qwen / DashScope
     dashscope_api_key: str = ""
-    dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/api/v1"
+    dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-max"
 
     # CSDI

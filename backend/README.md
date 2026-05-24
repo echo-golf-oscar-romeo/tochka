@@ -43,9 +43,19 @@ Set `DEMO_MODE=true` in `.env`. Every tool short-circuits to `app/mock/canned.py
 |---|---|
 | FastAPI routing | wired |
 | Pydantic models | wired |
-| Orchestrator decision tree | rule-based stub, ready for Qwen wiring |
-| Qwen tool-calling loop | stub — TODO once Qwen-Agent API confirmed |
-| All tool functions | stubs returning canned data when `DEMO_MODE=true`, raising `NotImplementedError` otherwise |
+| Orchestrator decision tree (rule-based methodology pick) | wired |
+| Qwen LLM — clarifying question | **wired** via DashScope OpenAI-compatible endpoint; falls back to hard-coded string when no API key |
+| Qwen LLM — per-section narrative rewriting | **wired**; falls back to composed f-string when no API key |
+| Qwen tool-calling loop (LLM picks tools turn-by-turn) | stub — see `QWEN-AGENT-HOOK` in `app/orchestrator/agent.py`; slots in `qwen-agent.Assistant` later |
+| All data tool functions | stubs returning canned data when `DEMO_MODE=true`, raising `NotImplementedError` otherwise |
 | CSDI client | stub |
-| DashScope client | stub |
 | DuckDB-spatial connection | wired |
+
+## LLM mode vs. demo mode
+
+`DEMO_MODE` only gates **data tools** (CSDI, isochrones, competitors, population). LLM calls are independent:
+
+- If `DASHSCOPE_API_KEY` is set → real Qwen for clarify + narrative (recommended for live demo).
+- If unset or the call fails → graceful fallback to hard-coded strings. Loop still completes.
+
+That split lets the live demo show the LLM thinking on stage while the data layer stays deterministic against venue WiFi.

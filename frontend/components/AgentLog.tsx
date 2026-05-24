@@ -81,6 +81,7 @@ function summarise(ev: Event): string {
   if (ev.kind === "tool_result") return `← ${p.tool}: ${JSON.stringify(omit(p, "tool"))}`;
   if (ev.kind === "plan") return `plan: ${JSON.stringify(p.plan)}`;
   if (ev.kind === "clarify") return String(p.question);
+  if (ev.kind === "narrating") return `writing "${String(p.title ?? p.section_id)}"…`;
   if (ev.kind === "storymap_ready") return `storymap ${p.storymap_id}`;
   if (ev.kind === "done") return "done";
   return JSON.stringify(p);
