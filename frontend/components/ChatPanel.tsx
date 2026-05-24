@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chatAsk, type ChatResponse } from "@/lib/api";
+import ChatMap, { type ChatPoint } from "./ChatMap";
 
 interface Message {
   role: "user" | "assistant";
@@ -68,6 +69,18 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
     }
   }
 
+  // Pull the most recent assistant answer whose rows include coordinates,
+  // so the chat map updates on every geo-bearing reply.
+  const mapPoints = useMemo<ChatPoint[]>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant" || !m.rows || m.rows.length === 0) continue;
+      const pts = extractPoints(m.rows);
+      if (pts.length > 0) return pts;
+    }
+    return [];
+  }, [messages]);
+
   if (!open) {
     return (
       <button
@@ -96,6 +109,19 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
           ✕
         </button>
       </header>
+
+      {mapPoints.length > 0 && (
+        <div className="border-b border-muted/30 bg-paper">
+          <div className="px-4 pt-2 pb-1 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wider text-muted">
+              {mapPoints.length} result{mapPoints.length === 1 ? "" : "s"} on the map
+            </span>
+          </div>
+          <div className="h-64 w-full">
+            <ChatMap points={mapPoints} />
+          </div>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm">
         {messages.length === 0 && (
@@ -221,4 +247,34 @@ function formatCell(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
   return String(v);
+}
+
+const LAT_KEYS = ["lat", "latitude", "y", "Lat", "Latitude"];
+const LNG_KEYS = ["lng", "lon", "long", "longitude", "x", "Lng", "Lon", "Longitude"];
+
+function pickNumber(row: Record<string, unknown>, keys: readonly string[]): number | null {
+  for (const k of keys) {
+    if (k in row) {
+      const v = row[k];
+      const n = typeof v === "number" ? v : parseFloat(String(v));
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
+function extractPoints(rows: Record<string, unknown>[]): ChatPoint[] {
+  const out: ChatPoint[] = [];
+  rows.forEach((row, i) => {
+    const lat = pickNumber(row, LAT_KEYS);
+    const lng = pickNumber(row, LNG_KEYS);
+    if (lat === null || lng === null) return;
+    // Quick sanity check — HK is roughly (113.7..114.5, 22.1..22.6); but
+    // generally accept any coordinates within global lat/lng bounds.
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+    const id = String(row.id ?? row.location_id ?? row.user_location_id ?? `r${i}`);
+    const label = String(row.name ?? row.brand ?? row.title ?? "");
+    out.push({ id, lat, lng, label, meta: row });
+  });
+  return out;
 }
