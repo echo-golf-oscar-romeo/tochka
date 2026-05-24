@@ -1,20 +1,29 @@
 """End-to-end happy path with DEMO_MODE.
 
 Upload sample CSV → /analyze (clarify → re-call with answer) → /storymap.
+
+Tests run with DEMO_MODE=true and all external-service API keys forcibly
+emptied — pydantic-settings reads .env by default and a developer with real
+DASHSCOPE/DEEPSEEK/MAPBOX keys in .env would otherwise hit real APIs from
+inside the test, which (a) hits the network, (b) costs tokens, and (c) leaks
+httpx connections across the TestClient's short-lived event loop.
 """
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
-os.environ.setdefault("DEMO_MODE", "true")
+# These must be set before importing app.* so the lru-cached Settings picks
+# them up. os.environ takes precedence over .env in pydantic-settings.
+os.environ["DEMO_MODE"] = "true"
+os.environ["DASHSCOPE_API_KEY"] = ""
+os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["MAPBOX_ACCESS_TOKEN"] = ""
 
-import pytest
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient    # noqa: E402
 
-from app.main import app
+from app.main import app    # noqa: E402
 
 SAMPLE = Path(__file__).resolve().parents[1] / "app" / "mock" / "sample_branches.csv"
 
