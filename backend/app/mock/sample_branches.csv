@@ -1,16 +1,16 @@
-branch_id,name,type,address,district,lat,lng
-BR001,Sham Shui Po Branch,branch,"88 Yen Chow Street, Sham Shui Po",Sham Shui Po,22.3311,114.1623
-BR002,Cheung Sha Wan Branch,branch,"Cheung Sha Wan Road, Cheung Sha Wan",Sham Shui Po,22.3389,114.1559
-BR003,Lai Chi Kok Branch,branch,"Lai Chi Kok Road",Sham Shui Po,22.3375,114.1496
-BR004,Mei Foo Branch,branch,"Mount Sterling Mall, Mei Foo",Sham Shui Po,22.3370,114.1392
-BR005,Mong Kok Branch,branch,"Nathan Road, Mong Kok",Yau Tsim Mong,22.3193,114.1696
-BR006,Yau Ma Tei Branch,branch,"Nathan Road, Yau Ma Tei",Yau Tsim Mong,22.3142,114.1707
-BR007,Tsim Sha Tsui Branch,branch,"Nathan Road, Tsim Sha Tsui",Yau Tsim Mong,22.2988,114.1722
-BR008,Central District Branch,branch,"Bank of China Tower, Central",Central and Western,22.2811,114.1592
-BR009,Causeway Bay Branch,branch,"Yee Wo Street, Causeway Bay",Wan Chai,22.2804,114.1834
-BR010,North Point Branch,branch,"King's Road, North Point",Eastern,22.2912,114.2003
-BR011,Quarry Bay Branch,branch,"King's Road, Quarry Bay",Eastern,22.2872,114.2114
-BR012,Tsing Yi Branch,branch,"Maritime Square, Tsing Yi",Kwai Tsing,22.3580,114.1067
-ATM001,Sham Shui Po MTR ATM,atm,"Sham Shui Po MTR Exit B2",Sham Shui Po,22.3306,114.1626
-ATM002,Cheung Sha Wan MTR ATM,atm,"Cheung Sha Wan MTR",Sham Shui Po,22.3360,114.1565
-ATM003,Mong Kok East ATM,atm,"Mong Kok East MTR",Yau Tsim Mong,22.3215,114.1730
+branch_id,name,type,address,district,lat,lng,capacity,daily_visitors
+BR001,Sham Shui Po Branch,branch,"88 Yen Chow Street, Sham Shui Po",Sham Shui Po,22.3311,114.1623,1800,2150
+BR002,Cheung Sha Wan Branch,branch,"Cheung Sha Wan Road, Cheung Sha Wan",Sham Shui Po,22.3389,114.1559,1800,1620
+BR003,Lai Chi Kok Branch,branch,"Lai Chi Kok Road",Sham Shui Po,22.3375,114.1496,1800,1450
+BR004,Mei Foo Branch,branch,"Mount Sterling Mall, Mei Foo",Sham Shui Po,22.3370,114.1392,1800,1280
+BR005,Mong Kok Branch,branch,"Nathan Road, Mong Kok",Yau Tsim Mong,22.3193,114.1696,1800,2400
+BR006,Yau Ma Tei Branch,branch,"Nathan Road, Yau Ma Tei",Yau Tsim Mong,22.3142,114.1707,1800,2120
+BR007,Tsim Sha Tsui Branch,branch,"Nathan Road, Tsim Sha Tsui",Yau Tsim Mong,22.2988,114.1722,1800,1910
+BR008,Central District Branch,branch,"Bank of China Tower, Central",Central and Western,22.2811,114.1592,2400,1720
+BR009,Causeway Bay Branch,branch,"Yee Wo Street, Causeway Bay",Wan Chai,22.2804,114.1834,1800,2310
+BR010,North Point Branch,branch,"King's Road, North Point",Eastern,22.2912,114.2003,1800,1530
+BR011,Quarry Bay Branch,branch,"King's Road, Quarry Bay",Eastern,22.2872,114.2114,1800,1390
+BR012,Tsing Yi Branch,branch,"Maritime Square, Tsing Yi",Kwai Tsing,22.3580,114.1067,1800,1920
+ATM001,Sham Shui Po MTR ATM,atm,"Sham Shui Po MTR Exit B2",Sham Shui Po,22.3306,114.1626,,
+ATM002,Cheung Sha Wan MTR ATM,atm,"Cheung Sha Wan MTR",Sham Shui Po,22.3360,114.1565,,
+ATM003,Mong Kok East ATM,atm,"Mong Kok East MTR",Yau Tsim Mong,22.3215,114.1730,,

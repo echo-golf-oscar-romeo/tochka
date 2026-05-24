@@ -26,6 +26,7 @@ interface AnalyzeBody {
   network_id: string;
   user_intent?: string;
   clarification_answer?: string;
+  archetypes?: ("diagnose" | "expand" | "rationalise")[];
 }
 
 interface AgentEvent {

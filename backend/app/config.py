@@ -30,9 +30,13 @@ class Settings(BaseSettings):
     csdi_api_key: str = ""
     csdi_base_url: str = "https://www.als.gov.hk"
 
+    # Mapbox — isochrone polygons (CSDI 3D Pedestrian is route-only).
+    mapbox_access_token: str = ""
+
     # Data paths
     duckdb_path: str = "./data/tochka.duckdb"
     osm_hk_pbf_path: str = "./data/hong-kong-latest.osm.pbf"
+    osm_banks_path: str = "./data/osm/banks_atms_hk.json"
 
     # CORS
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])

@@ -35,27 +35,52 @@ async def upload_csv(file: UploadFile = File(...)) -> Network:
         raise HTTPException(400, "CSV is empty.")
 
     cols = {c.lower(): c for c in df.columns}
-    name_col = cols.get("name") or cols.get("branch_name") or cols.get("location_name")
+
+    def _first(*aliases: str) -> str | None:
+        for a in aliases:
+            if a in cols:
+                return cols[a]
+        return None
+
+    name_col = _first("name", "branch_name", "location_name")
     if not name_col:
         raise HTTPException(400, "CSV must include a 'name' column.")
 
-    lat_col = cols.get("lat") or cols.get("latitude") or cols.get("y")
-    lng_col = cols.get("lng") or cols.get("lon") or cols.get("longitude") or cols.get("x")
-    addr_col = cols.get("address") or cols.get("addr")
+    lat_col = _first("lat", "latitude", "y")
+    lng_col = _first("lng", "lon", "longitude", "x")
+    addr_col = _first("address", "addr")
 
     if not ((lat_col and lng_col) or addr_col):
         raise HTTPException(400, "CSV must include (lat,lng) or an address column.")
 
-    reserved = {name_col, lat_col, lng_col, addr_col}
+    # Optional operational columns. We accept several common aliases so
+    # uploaders don't have to rename columns. First match wins per slot.
+    capacity_col = _first("capacity", "max_capacity", "cap", "hourly_capacity",
+                          "daily_capacity", "capacity_per_day")
+    volume_col = _first("actual_volume", "volume", "traffic", "footfall",
+                        "visitors", "daily_visitors", "customers_per_day",
+                        "monthly_transactions", "transactions", "utilization",
+                        "utilisation", "throughput")
+
+    reserved = {c for c in (name_col, lat_col, lng_col, addr_col, capacity_col, volume_col) if c}
     locations: list[Location] = []
     for _, row in df.iterrows():
+        def _num(col: str | None) -> float | None:
+            if not col or pd.isna(row[col]):
+                return None
+            try:
+                return float(row[col])
+            except (TypeError, ValueError):
+                return None
         locations.append(
             Location(
                 id=str(uuid.uuid4()),
                 name=str(row[name_col]),
-                lat=float(row[lat_col]) if lat_col and pd.notna(row[lat_col]) else None,
-                lng=float(row[lng_col]) if lng_col and pd.notna(row[lng_col]) else None,
+                lat=_num(lat_col),
+                lng=_num(lng_col),
                 address=str(row[addr_col]) if addr_col and pd.notna(row[addr_col]) else None,
+                capacity=_num(capacity_col),
+                actual_volume=_num(volume_col),
                 raw_fields={k: row[k] for k in df.columns if k not in reserved and pd.notna(row[k])},
             )
         )

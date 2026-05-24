@@ -13,6 +13,9 @@ class Location(BaseModel):
     lat: float | None = None
     lng: float | None = None
     address: str | None = None
+    # Optional operational columns — improve anomaly detection when present.
+    capacity: float | None = None         # max throughput per relevant time unit
+    actual_volume: float | None = None    # observed throughput (traffic / utilisation / visitors)
     # Everything else from the CSV row — preserved for the orchestrator to inspect.
     raw_fields: dict[str, Any] = Field(default_factory=dict)
     # Filled in by the geocoding tool when (lat, lng) was missing.
