@@ -20,6 +20,8 @@ interface Props {
   styleUrl?: string;
   /** Auto-fit the view to the union of all geojson layers when they arrive. */
   autoFit?: boolean;
+  /** Per-layer visibility flags. Missing entry = visible. */
+  visibility?: Record<string, boolean>;
 }
 
 const FALLBACK_STYLE: StyleSpecification = {
@@ -29,7 +31,7 @@ const FALLBACK_STYLE: StyleSpecification = {
 };
 
 const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
-  { layers, initialCenter = [114.165, 22.33], initialZoom = 11, styleUrl, autoFit = true },
+  { layers, initialCenter = [114.165, 22.33], initialZoom = 11, styleUrl, autoFit = true, visibility },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -120,10 +122,13 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
       addOrReplaceLayer(map, layer, knownLayersRef.current);
     }
     for (const known of Array.from(knownLayersRef.current)) {
-      if (!incoming.has(known)) removeLayer(map, known, knownLayersRef.current);
+      if (!incoming.has(known) && !known.endsWith("-outline")) {
+        removeLayer(map, known, knownLayersRef.current);
+      }
     }
+    applyVisibility(map, layers, visibility ?? {});
     if (autoFit) fitToLayers(map, layers);
-  }, [layers, autoFit]);
+  }, [layers, autoFit, visibility]);
 
   return <div ref={containerRef} className="w-full h-full" />;
 });
@@ -170,6 +175,23 @@ function addOrReplaceLayer(map: MlMap, layer: StoryLayer, known: Set<string>) {
     }
   }
   known.add(layer.id);
+}
+
+
+function applyVisibility(map: MlMap, layers: StoryLayer[], visibility: Record<string, boolean>) {
+  for (const layer of layers) {
+    const visible = visibility[layer.id] !== false;
+    const value = visible ? "visible" : "none";
+    for (const id of [layer.id, `${layer.id}-outline`]) {
+      if (map.getLayer(id)) {
+        try {
+          map.setLayoutProperty(id, "visibility", value);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
 }
 
 

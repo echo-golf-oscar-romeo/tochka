@@ -2,25 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* --- Inter via Google Fonts: keep the network call narrow ---------- */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
 @layer base {
   html {
     color-scheme: light;
+    -webkit-font-smoothing: antialiased;
   }
   body {
-    @apply bg-paper text-ink antialiased;
+    @apply bg-canvas text-ink;
     font-feature-settings: "ss01", "cv11";
+    letter-spacing: -0.005em;
   }
-  h1, h2, h3 {
-    @apply font-serif;
+  h1, h2, h3, h4 {
+    @apply tracking-tightish;
+    font-weight: 600;
+  }
+  /* MapLibre attribution: very small, low-contrast — Aino-style */
+  .maplibregl-ctrl-attrib {
+    @apply text-[10px] !text-muted/80;
+    background: rgba(255,255,255,0.6) !important;
+  }
+  .maplibregl-canvas {
+    outline: none;
   }
 }
 
-/* MapLibre tweaks — quieter UI, Aino-style. */
-.maplibregl-ctrl-attrib {
-  @apply text-[10px] opacity-70;
-}
-
-/* Storymap scroll layout: sticky map left, scrolling chapters right. */
+/* --- The storymap shell — kept compatible with the legacy /story/[id] -- */
 .storymap-shell {
   display: grid;
   grid-template-columns: 1fr;
@@ -39,6 +48,6 @@
 .storymap-chapter {
   @apply min-h-screen flex items-center px-8 py-24 max-w-prose mx-auto;
 }
-.storymap-chapter[data-active="true"] {
-  /* could fade non-active chapters here */
-}
+
+/* Hide the default MapLibre logo only in workspace contexts that opt in. */
+.no-logo .maplibregl-ctrl-logo { display: none !important; }

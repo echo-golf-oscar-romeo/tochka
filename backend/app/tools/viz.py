@@ -25,12 +25,16 @@ PALETTE = {
 }
 
 # Basemap style emitted into the storymap payload. Carto Positron is the
-# working default; CSDI's vector style URL currently returns 404.
-CSDI_VECTOR_STYLE = (
-    os.environ.get("NEXT_PUBLIC_BASEMAP_STYLE")
-    or os.environ.get("NEXT_PUBLIC_CSDI_VECTOR_STYLE")
-    or "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-)
+# working default. CSDI's vector style URL still 404s; any URL that
+# resolves to that dead host is ignored so a stale .env can't poison it.
+def _basemap_style() -> str:
+    candidate = os.environ.get("NEXT_PUBLIC_BASEMAP_STYLE")
+    if candidate and "mapapi.geodata.gov.hk" not in candidate:
+        return candidate
+    return "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+
+
+CSDI_VECTOR_STYLE = _basemap_style()
 
 
 def make_layer(layer_id: str, kind: str, data: dict[str, Any] | None = None,
