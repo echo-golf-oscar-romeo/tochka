@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chatAsk, chatNetwork, type ChatResponse } from "@/lib/api";
 import ChatMap, { type ChatPoint } from "./ChatMap";
+import ChatChart from "./ChatChart";
 
 interface Message {
   role: "user" | "assistant";
@@ -24,6 +25,9 @@ interface Props {
   suggestions?: string[];
   /** Names of layers currently on the map, used for "/" autocomplete. */
   layerNames?: string[];
+  /** Optional callback — fires when the user clicks "Add to map" on a
+   *  message with geo rows. The parent creates a layer on the main map. */
+  onAddPointsToMap?: (label: string, points: ChatPoint[]) => void;
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -32,7 +36,9 @@ const DEFAULT_SUGGESTIONS = [
   "Show competitor brands by district.",
 ];
 
-export default function ChatPanel({ storymapId, networkId, suggestions, layerNames }: Props) {
+export default function ChatPanel({
+  storymapId, networkId, suggestions, layerNames, onAddPointsToMap,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -153,7 +159,12 @@ export default function ChatPanel({ storymapId, networkId, suggestions, layerNam
           </div>
         )}
         {messages.map((m, i) => (
-          <MessageBubble key={i} m={m} />
+          <MessageBubble
+            key={i}
+            m={m}
+            onAddPointsToMap={onAddPointsToMap}
+            messageIndex={i}
+          />
         ))}
         {busy && (
           <div className="text-muted italic flex items-center gap-2 text-xs">
@@ -222,7 +233,13 @@ export default function ChatPanel({ storymapId, networkId, suggestions, layerNam
   );
 }
 
-function MessageBubble({ m }: { m: Message }) {
+interface MessageBubbleProps {
+  m: Message;
+  onAddPointsToMap?: (label: string, points: ChatPoint[]) => void;
+  messageIndex: number;
+}
+
+function MessageBubble({ m, onAddPointsToMap, messageIndex }: MessageBubbleProps) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
@@ -230,6 +247,10 @@ function MessageBubble({ m }: { m: Message }) {
       </div>
     );
   }
+
+  const geoPoints = m.rows ? extractPoints(m.rows) : [];
+  const chartCols = m.columns ?? (m.rows && m.rows[0] ? Object.keys(m.rows[0]) : []);
+
   return (
     <div>
       <div
@@ -238,10 +259,25 @@ function MessageBubble({ m }: { m: Message }) {
         }`}
       >
         <p className="whitespace-pre-wrap">{m.content}</p>
-        {m.provider && (
-          <p className="mt-1 text-[10px] text-subtle">via {m.provider}</p>
-        )}
+        <div className="mt-1 flex items-center gap-2 text-[10px] text-subtle">
+          {m.provider && <span>via {m.provider}</span>}
+          {geoPoints.length > 0 && onAddPointsToMap && (
+            <button
+              type="button"
+              onClick={() => onAddPointsToMap(`chat #${messageIndex + 1}`, geoPoints)}
+              className="text-accent-600 hover:text-accent-700 underline-offset-2 hover:underline"
+            >
+              + add {geoPoints.length} {geoPoints.length === 1 ? "point" : "points"} to map
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Inline chart, when the row shape is chartable. */}
+      {m.rows && m.rows.length >= 2 && (
+        <ChatChart rows={m.rows} columns={chartCols} />
+      )}
+
       {m.sql && (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-muted">SQL · {(m.rows ?? []).length} rows</summary>
