@@ -22,16 +22,19 @@ interface Props {
   layers: StoryLayer[];
   layerVisibility: Record<string, boolean>;
   onToggleLayer: (id: string, visible: boolean) => void;
+  onRemoveLayer: (id: string) => void;
 
   // Outputs
   storymapReady: boolean;
   onOpenStorymap: () => void;
   beautifying: boolean;
   onBeautify: () => void;
+  beautifyNotice?: string | null;
 
   // Chat
   storymapIdForChat: string | null;
   chatSuggestions: string[];
+  layerNames: string[];
 }
 
 const WORKFLOWS: { id: Workflow; label: string; sub: string }[] = [
@@ -44,9 +47,9 @@ export default function WorkspacePanel(props: Props) {
   const {
     networkId, networkSummary, onUpload,
     activeWorkflow, busy, onRunWorkflow,
-    layers, layerVisibility, onToggleLayer,
-    storymapReady, onOpenStorymap, beautifying, onBeautify,
-    storymapIdForChat, chatSuggestions,
+    layers, layerVisibility, onToggleLayer, onRemoveLayer,
+    storymapReady, onOpenStorymap, beautifying, onBeautify, beautifyNotice,
+    storymapIdForChat, chatSuggestions, layerNames,
   } = props;
   const disabled = !networkId || busy;
 
@@ -101,6 +104,7 @@ export default function WorkspacePanel(props: Props) {
           layers={layers}
           visibility={layerVisibility}
           onToggle={onToggleLayer}
+          onRemove={onRemoveLayer}
         />
       </Section>
 
@@ -135,20 +139,31 @@ export default function WorkspacePanel(props: Props) {
         </div>
       </Section>
 
+      {beautifyNotice && (
+        <div className="px-4 py-2 border-b border-border bg-highlight-50 text-[11px] text-ink">
+          <span className="font-medium">Beautify:</span> {beautifyNotice}
+        </div>
+      )}
+
       {/* Chat — takes remaining vertical space */}
       <div className="flex-1 min-h-0 flex flex-col border-t border-border">
         <div className="px-4 pt-3 pb-2 flex items-center justify-between">
           <div className="text-[10px] uppercase tracking-wider text-muted">Ask the data</div>
           <div className="text-[10px] text-subtle">
-            {storymapIdForChat ? "Spatial SQL · DuckDB" : "Available after first run"}
+            {networkId ? "Spatial SQL · DuckDB" : "Upload first"}
           </div>
         </div>
         <div className="flex-1 min-h-0">
-          {storymapIdForChat ? (
-            <ChatPanel storymapId={storymapIdForChat} suggestions={chatSuggestions} />
+          {networkId ? (
+            <ChatPanel
+              storymapId={storymapIdForChat ?? undefined}
+              networkId={networkId}
+              suggestions={chatSuggestions}
+              layerNames={layerNames}
+            />
           ) : (
             <div className="px-4 py-3 text-xs text-muted">
-              Once any workflow completes, you can ask follow-up questions about your network here. The agent writes spatial SQL against the loaded data.
+              Drop a CSV to begin. You&apos;ll be able to ask spatial questions immediately — no need to run a workflow first.
             </div>
           )}
         </div>

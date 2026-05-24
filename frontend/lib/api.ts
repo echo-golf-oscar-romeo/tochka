@@ -76,6 +76,16 @@ export async function chatAsk(storymapId: string, message: string): Promise<Chat
   return r.json();
 }
 
+export async function chatNetwork(networkId: string, message: string): Promise<ChatResponse> {
+  const r = await fetch(`${API_BASE}/chat/network/${networkId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!r.ok) throw new Error(`chat failed: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 interface AnalyzeBody {
   network_id: string;
   user_intent?: string;

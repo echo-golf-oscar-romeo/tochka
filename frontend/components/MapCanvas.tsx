@@ -86,23 +86,40 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     });
     mapRef.current = map;
 
-    map.on("error", () => {
-      // If the remote style fails, fall back to a blank canvas so layers
-      // still render on top — the dev overlay then becomes harmless.
-      try { map.setStyle(FALLBACK_STYLE); } catch { /* ignore */ }
+    // One-shot fallback if the basemap style fetch itself fails.
+    // We listen for *one* error during initial style load and swap to a
+    // blank canvas, then re-apply layers exactly once. Without the
+    // one-shot guard, the previous version recursed into a styledata loop:
+    // each addSource fires `styledata`, which triggered another reapply,
+    // which fired more styledata — and the map appeared to "stop loading"
+    // shortly after the first layer was added.
+    let fallbackApplied = false;
+    map.on("error", (e) => {
+      if (fallbackApplied) return;
+      const looksLikeStyleFailure = !map.isStyleLoaded() || (e?.error as Error | undefined)?.message?.includes("style");
+      if (!looksLikeStyleFailure) return;
+      fallbackApplied = true;
+      try {
+        map.setStyle(FALLBACK_STYLE);
+        map.once("load", () => {
+          loadedRef.current = true;
+          knownLayersRef.current.clear();
+          for (const layer of layersRef.current) {
+            addOrReplaceLayer(map, layer, knownLayersRef.current);
+          }
+        });
+      } catch {
+        /* ignore */
+      }
     });
 
-    const reapply = () => {
+    map.on("load", () => {
       loadedRef.current = true;
       knownLayersRef.current.clear();
       for (const layer of layersRef.current) {
         addOrReplaceLayer(map, layer, knownLayersRef.current);
       }
       if (autoFit) fitToLayers(map, layersRef.current);
-    };
-    map.on("load", reapply);
-    map.on("styledata", () => {
-      if (loadedRef.current) reapply();
     });
 
     return () => {

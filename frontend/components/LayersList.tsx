@@ -6,6 +6,7 @@ interface Props {
   layers: StoryLayer[];
   visibility: Record<string, boolean>;
   onToggle: (layerId: string, visible: boolean) => void;
+  onRemove?: (layerId: string) => void;
 }
 
 const LAYER_LABELS: Record<string, string> = {
@@ -15,11 +16,11 @@ const LAYER_LABELS: Record<string, string> = {
   "anomalies-under": "Under-performing branches",
 };
 
-export default function LayersList({ layers, visibility, onToggle }: Props) {
+export default function LayersList({ layers, visibility, onToggle, onRemove }: Props) {
   if (layers.length === 0) {
     return (
       <p className="text-xs text-muted px-1 py-2">
-        Layers will appear here as the agent runs.
+        Layers appear here as workflows produce them. Toggle to hide / show. Remove to free the canvas.
       </p>
     );
   }
@@ -33,33 +34,60 @@ export default function LayersList({ layers, visibility, onToggle }: Props) {
         return (
           <li
             key={layer.id}
-            className="group flex items-center gap-2 py-1.5 px-1 rounded hover:bg-rule"
+            className="group flex items-center gap-2 py-1.5 px-1.5 rounded hover:bg-rule transition"
           >
             <button
               type="button"
               onClick={() => onToggle(layer.id, !visible)}
               aria-pressed={visible}
-              className="flex items-center gap-2 flex-1 text-left"
+              className="flex items-center gap-2 flex-1 text-left min-w-0"
             >
               <span
-                className={`inline-block h-3 w-3 rounded-sm border ${
+                className={`inline-block h-3 w-3 rounded-sm border shrink-0 ${
                   visible ? "" : "opacity-30"
                 }`}
                 style={{ background: swatch.fill, borderColor: swatch.stroke }}
                 aria-hidden
               />
-              <span className={`text-sm ${visible ? "text-ink" : "text-subtle line-through"}`}>
+              <span className={`text-sm truncate ${visible ? "text-ink" : "text-subtle line-through"}`}>
                 {label}
               </span>
-              <span className="text-[11px] text-muted">{count}</span>
+              <span className="text-[11px] text-muted shrink-0">{count}</span>
             </button>
-            <span className="text-[10px] text-subtle opacity-0 group-hover:opacity-100">
-              {visible ? "hide" : "show"}
-            </span>
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+              <button
+                type="button"
+                onClick={() => onToggle(layer.id, !visible)}
+                className="text-[10px] text-muted hover:text-ink px-1.5 py-0.5 rounded"
+                title={visible ? "Hide layer" : "Show layer"}
+              >
+                {visible ? "hide" : "show"}
+              </button>
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(layer.id)}
+                  className="text-muted hover:text-accent-700 transition rounded px-1.5 py-0.5"
+                  title="Remove layer"
+                  aria-label={`Remove ${label}`}
+                >
+                  <TrashIcon />
+                </button>
+              )}
+            </div>
           </li>
         );
       })}
     </ul>
+  );
+}
+
+
+function TrashIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+      <path d="M3 4h10M6 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M5 4l.6 9.1a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4L11 4M7 7v4M9 7v4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
   );
 }
 
