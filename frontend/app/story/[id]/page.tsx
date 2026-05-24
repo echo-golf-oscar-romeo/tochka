@@ -1,7 +1,6 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import ChatPanel from "@/components/ChatPanel";
 import Storymap from "@/components/Storymap";
 import { fetchStorymap } from "@/lib/api";
 import type { StorymapResult } from "@/lib/storymap";
@@ -15,12 +14,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
     fetchStorymap(id).then(setData).catch((e) => setErr(String(e)));
   }, [id]);
 
-  if (err) return <main className="p-12 text-warn">Failed to load: {err}</main>;
+  if (err) return <main className="p-12 text-accent-700">Failed to load: {err}</main>;
   if (!data) return <main className="p-12 text-muted">Loading storymap…</main>;
-  return (
-    <>
-      <Storymap data={data} />
-      <ChatPanel storymapId={id} initialOpen={false} />
-    </>
-  );
+  return <Storymap data={data} />;
 }

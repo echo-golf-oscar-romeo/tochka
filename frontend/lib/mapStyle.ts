@@ -1,22 +1,27 @@
 /**
  * Basemap style URL.
  *
- * Default: Carto Positron — a light, subtle vector style that reads well
- * under data layers (Aino-style). Cross-origin enabled, no auth required.
+ * Defaults to Carto Positron — a clean light vector basemap that reads
+ * well under data. CSDI's vector style URL still 404s as of writing;
+ * we explicitly reject any URL that contains the dead host so a stale
+ * `.env.local` from earlier in development can't poison the map.
  *
- * The original CSDI Vector Map URL
- * (https://mapapi.geodata.gov.hk/gs/api/v1.0.0/styleSheet/vector) currently
- * returns 404 — CSDI changed their API surface. When CSDI republishes a
- * working vector style URL, point NEXT_PUBLIC_BASEMAP_STYLE at it via
- * `.env.local` and the app will pick it up without code changes.
- *
- * For backward compatibility we still read the older
- * NEXT_PUBLIC_CSDI_VECTOR_STYLE name as a secondary override.
+ * To override: set `NEXT_PUBLIC_BASEMAP_STYLE`.
  */
+
+const DEFAULT_BASEMAP =
+  "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+
+function isUsable(url: string | undefined | null): url is string {
+  if (!url) return false;
+  // The CSDI vector style URL returns 404 + CORS-blocked; ignore it even
+  // if a developer left it in .env from an older example.
+  if (url.includes("mapapi.geodata.gov.hk")) return false;
+  return true;
+}
+
 export function csdiStyleUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_BASEMAP_STYLE ??
-    process.env.NEXT_PUBLIC_CSDI_VECTOR_STYLE ??
-    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-  );
+  const explicit = process.env.NEXT_PUBLIC_BASEMAP_STYLE;
+  if (isUsable(explicit)) return explicit;
+  return DEFAULT_BASEMAP;
 }

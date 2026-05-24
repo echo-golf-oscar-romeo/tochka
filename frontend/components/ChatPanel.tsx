@@ -16,18 +16,17 @@ interface Message {
 
 interface Props {
   storymapId: string;
-  initialOpen?: boolean;
+  /** Per-network suggestions, computed by the workspace. */
+  suggestions?: string[];
 }
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   "Which branches have the most banks within 500m?",
-  "Which BOC branches in my network are within 200m of an HSBC?",
-  "List branches with capacity utilisation over 100%.",
-  "Are any of my branches within 500m of each other? (cannibalisation)",
+  "Are any of my branches within 500m of each other?",
+  "Show competitor brands by district.",
 ];
 
-export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
-  const [open, setOpen] = useState(initialOpen);
+export default function ChatPanel({ storymapId, suggestions }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,8 +68,7 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
     }
   }
 
-  // Pull the most recent assistant answer whose rows include coordinates,
-  // so the chat map updates on every geo-bearing reply.
+  // Latest assistant answer with geo rows → drives the inline chat map.
   const mapPoints = useMemo<ChatPoint[]>(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
@@ -81,62 +79,34 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
     return [];
   }, [messages]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed right-4 bottom-4 z-30 rounded-full bg-accent text-white px-4 py-2 shadow-lg text-sm"
-      >
-        Ask the data
-      </button>
-    );
-  }
+  const sug = suggestions && suggestions.length > 0 ? suggestions : DEFAULT_SUGGESTIONS;
 
   return (
-    <aside className="fixed right-0 top-0 bottom-0 z-30 w-full sm:w-[28rem] bg-white border-l border-muted/30 flex flex-col shadow-xl">
-      <header className="px-4 py-3 border-b border-muted/30 flex items-center justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-wider text-accent font-semibold">Ask the data</div>
-          <div className="text-xs text-muted">Spatial SQL via DuckDB · grounded in OSM HK</div>
-        </div>
-        <button
-          type="button"
-          aria-label="Close chat"
-          onClick={() => setOpen(false)}
-          className="text-muted hover:text-ink px-2"
-        >
-          ✕
-        </button>
-      </header>
-
+    <div className="flex flex-col h-full">
       {mapPoints.length > 0 && (
-        <div className="border-b border-muted/30 bg-paper">
-          <div className="px-4 pt-2 pb-1 flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wider text-muted">
-              {mapPoints.length} result{mapPoints.length === 1 ? "" : "s"} on the map
-            </span>
+        <div className="shrink-0 border-b border-border">
+          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted">
+            {mapPoints.length} on the map
           </div>
-          <div className="h-64 w-full">
+          <div className="h-52 w-full">
             <ChatMap points={mapPoints} />
           </div>
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm">
         {messages.length === 0 && (
-          <div className="text-muted">
-            <p className="mb-3">
-              Ask follow-up questions about your network. The agent writes a SELECT query against your
-              uploaded locations and the HK competitor POI table, runs it, and explains the answer.
+          <div className="space-y-3">
+            <p className="text-muted text-xs leading-relaxed">
+              The agent writes a read-only SELECT against your network + the HK competitor table, runs it, and explains the result.
             </p>
-            <div className="space-y-2">
-              {SUGGESTIONS.map((s) => (
+            <div className="space-y-1.5">
+              {sug.map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => send(s)}
-                  className="block w-full text-left rounded border border-muted/30 hover:border-accent px-3 py-2 text-xs"
+                  className="block w-full text-left rounded border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-xs text-ink"
                 >
                   {s}
                 </button>
@@ -148,8 +118,8 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
           <MessageBubble key={i} m={m} />
         ))}
         {busy && (
-          <div className="text-muted italic flex items-center gap-2">
-            <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" />
+          <div className="text-muted italic flex items-center gap-2 text-xs">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent-500 animate-pulse" />
             writing SQL, executing, narrating…
           </div>
         )}
@@ -160,7 +130,7 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
           e.preventDefault();
           send(input);
         }}
-        className="border-t border-muted/30 p-3 flex gap-2"
+        className="shrink-0 border-t border-border p-2 flex gap-2"
       >
         <input
           type="text"
@@ -168,17 +138,17 @@ export default function ChatPanel({ storymapId, initialOpen = true }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}
-          className="flex-1 rounded border border-muted/30 px-3 py-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
+          className="flex-1 rounded border border-border focus:border-accent-500 focus:ring-1 focus:ring-accent-100 outline-none px-3 py-1.5 text-sm disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={busy || !input.trim()}
-          className="rounded bg-accent text-white px-4 py-2 text-sm disabled:opacity-40"
+          className="rounded bg-accent-500 text-white px-3 py-1.5 text-sm hover:bg-accent-600 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Send
         </button>
       </form>
-    </aside>
+    </div>
   );
 }
 
@@ -186,26 +156,26 @@ function MessageBubble({ m }: { m: Message }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="rounded-lg bg-accent text-white px-3 py-2 max-w-[85%]">{m.content}</div>
+        <div className="rounded-lg bg-accent-500 text-white px-3 py-2 max-w-[85%] text-sm">{m.content}</div>
       </div>
     );
   }
   return (
     <div>
       <div
-        className={`rounded-lg px-3 py-2 max-w-[95%] ${
-          m.error ? "bg-warn/10 border border-warn/40 text-warn" : "bg-paper border border-muted/20 text-ink"
+        className={`rounded-lg px-3 py-2 max-w-[97%] text-sm ${
+          m.error ? "bg-accent-50 border border-accent-200 text-accent-900" : "bg-surface border border-border text-ink"
         }`}
       >
         <p className="whitespace-pre-wrap">{m.content}</p>
         {m.provider && (
-          <p className="mt-1 text-[10px] text-muted">via {m.provider}</p>
+          <p className="mt-1 text-[10px] text-subtle">via {m.provider}</p>
         )}
       </div>
       {m.sql && (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-muted">SQL ({(m.rows ?? []).length} rows)</summary>
-          <pre className="mt-1 p-2 bg-paper border border-muted/20 rounded overflow-x-auto font-mono whitespace-pre">
+          <pre className="mt-1 p-2 bg-surface border border-border rounded overflow-x-auto font-mono whitespace-pre text-[11px]">
             {m.sql}
           </pre>
           {m.rows && m.rows.length > 0 && (
@@ -214,7 +184,7 @@ function MessageBubble({ m }: { m: Message }) {
                 <thead>
                   <tr className="text-left">
                     {(m.columns ?? Object.keys(m.rows[0])).map((c) => (
-                      <th key={c} className="border-b border-muted/30 px-2 py-1 text-muted font-medium">
+                      <th key={c} className="border-b border-border px-2 py-1 text-muted font-medium">
                         {c}
                       </th>
                     ))}
@@ -222,7 +192,7 @@ function MessageBubble({ m }: { m: Message }) {
                 </thead>
                 <tbody>
                   {m.rows.slice(0, 25).map((row, i) => (
-                    <tr key={i} className="border-b border-muted/10">
+                    <tr key={i} className="border-b border-rule">
                       {(m.columns ?? Object.keys(m.rows![0])).map((c) => (
                         <td key={c} className="px-2 py-1">
                           {formatCell(row[c])}
@@ -269,8 +239,6 @@ function extractPoints(rows: Record<string, unknown>[]): ChatPoint[] {
     const lat = pickNumber(row, LAT_KEYS);
     const lng = pickNumber(row, LNG_KEYS);
     if (lat === null || lng === null) return;
-    // Quick sanity check — HK is roughly (113.7..114.5, 22.1..22.6); but
-    // generally accept any coordinates within global lat/lng bounds.
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
     const id = String(row.id ?? row.location_id ?? row.user_location_id ?? `r${i}`);
     const label = String(row.name ?? row.brand ?? row.title ?? "");
