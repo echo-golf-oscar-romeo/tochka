@@ -1,0 +1,43 @@
+[project]
+name = "tochka-backend"
+version = "0.1.0"
+description = "Agent-driven location intelligence — backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.1",
+    "httpx>=0.27",
+    "pandas>=2.2",
+    "duckdb>=1.0",
+    "shapely>=2.0",
+    "h3>=4.1",
+    # Qwen-Agent ships an OpenAI-compatible client + tool-calling helpers.
+    # Pin loosely; the API has been churning in 2024-2025.
+    "qwen-agent>=0.0.10",
+    # Demo-mode helpers — pure-Python geometry without the GDAL chain.
+    "numpy>=1.26",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

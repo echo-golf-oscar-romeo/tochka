@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3 {
+    @apply font-serif;
+  }
+}
+
+/* MapLibre tweaks — quieter UI, Aino-style. */
+.maplibregl-ctrl-attrib {
+  @apply text-[10px] opacity-70;
+}
+
+/* Storymap scroll layout: sticky map left, scrolling chapters right. */
+.storymap-shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 100vh;
+}
+@media (min-width: 1024px) {
+  .storymap-shell {
+    grid-template-columns: 1fr 32rem;
+  }
+}
+.storymap-map {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.storymap-chapter {
+  @apply min-h-screen flex items-center px-8 py-24 max-w-prose mx-auto;
+}
+.storymap-chapter[data-active="true"] {
+  /* could fade non-active chapters here */
+}

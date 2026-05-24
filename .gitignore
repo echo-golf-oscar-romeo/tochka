@@ -1,0 +1,54 @@
+# Env
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.npm/
+
+# Data — large or scraped, never commit
+data/*
+!data/.gitkeep
+!data/README.md
+# DuckDB databases anywhere in the tree
+*.duckdb
+*.duckdb.wal
+backend/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs / tmp
+*.log
+.tmp/
+.cache/
+
+# uv
+.uv/
+uv.lock.bak
+
+# Local secrets / API keys
+*.pem
+*.key
+secrets/
