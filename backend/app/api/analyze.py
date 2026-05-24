@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from sse_starlette.sse import EventSourceResponse
 from app.models.analysis import Archetype
 from app.orchestrator.agent import Orchestrator
 from app.store import store
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
 
@@ -33,12 +36,26 @@ async def analyze(body: AnalyzeBody):
     orch = Orchestrator()
 
     async def event_stream():
-        async for event in orch.run(network, user_intent=body.user_intent,
-                                    clarification_answer=body.clarification_answer,
-                                    archetypes=body.archetypes):
-            # sse-starlette will JSON-stringify if we pass a dict; we wrap to be explicit.
-            yield {"event": event.kind, "data": json.dumps(event.payload)}
-            if event.kind == "storymap_ready":
-                store.storymaps[event.payload["storymap_id"]] = event.payload["storymap"]
+        try:
+            async for event in orch.run(network, user_intent=body.user_intent,
+                                        clarification_answer=body.clarification_answer,
+                                        archetypes=body.archetypes):
+                yield {"event": event.kind, "data": json.dumps(event.payload)}
+                if event.kind == "storymap_ready":
+                    store.storymaps[event.payload["storymap_id"]] = event.payload["storymap"]
+        except Exception as e:  # noqa: BLE001 — top of the stream, must catch all
+            # Emit a final 'error' event so the frontend agent log surfaces
+            # the failure inline rather than the browser reporting a generic
+            # ERR_INCOMPLETE_CHUNKED_ENCODING. Then re-raise (uvicorn logs
+            # the trace) so we keep server-side observability.
+            log.exception("Orchestrator failed mid-stream")
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "type": type(e).__name__,
+                    "message": str(e),
+                }),
+            }
+            raise
 
     return EventSourceResponse(event_stream())

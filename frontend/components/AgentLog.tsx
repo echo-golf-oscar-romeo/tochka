@@ -56,12 +56,17 @@ export default function AgentLog({ archetypes }: { archetypes?: Archetype[] }) {
 
   return (
     <div className="space-y-3 font-mono text-sm">
-      {events.map((ev, i) => (
-        <div key={i} className="flex gap-3">
-          <span className="text-muted shrink-0 w-32">{ev.kind}</span>
-          <span className="text-ink">{summarise(ev)}</span>
-        </div>
-      ))}
+      {events.map((ev, i) => {
+        const isError = ev.kind === "error";
+        return (
+          <div key={i} className={`flex gap-3 ${isError ? "p-3 bg-warn/10 border border-warn/40 rounded" : ""}`}>
+            <span className={`shrink-0 w-32 ${isError ? "text-warn font-bold" : "text-muted"}`}>
+              {ev.kind}
+            </span>
+            <span className={isError ? "text-warn" : "text-ink"}>{summarise(ev)}</span>
+          </div>
+        );
+      })}
       {clarify && !answer && (
         <div className="mt-8 p-6 bg-paper border rounded">
           <p className="font-serif text-xl mb-4">{clarify.question}</p>
@@ -100,6 +105,7 @@ function summarise(ev: Event): string {
   }
   if (ev.kind === "storymap_ready") return `storymap ${p.storymap_id}`;
   if (ev.kind === "done") return "done";
+  if (ev.kind === "error") return `${p.type ?? "Error"}: ${p.message ?? "(no message)"}`;
   return JSON.stringify(p);
 }
 

@@ -64,7 +64,7 @@ async def als_lookup(locations: list[Location]) -> list[Location]:
 
 
 async def csdi_location_search(query: str, bbox: tuple[float, float, float, float] | None = None) -> list[dict]:
-    """Free-text → coordinates via CSDI Location Search. Stubbed."""
-    if get_settings().demo_mode:
-        return canned.location_search(query)
-    raise NotImplementedError("Wire CSDI Location Search.")
+    """Free-text → coordinates via CSDI Location Search. Stubbed → canned."""
+    if not get_settings().demo_mode:
+        log.info("csdi_location_search not yet wired; using canned.")
+    return canned.location_search(query)
