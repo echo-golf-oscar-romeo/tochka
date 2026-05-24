@@ -22,6 +22,26 @@ export async function fetchStorymap(id: string): Promise<StorymapResult> {
   return r.json();
 }
 
+export interface ChatResponse {
+  answer: string;
+  sql: string | null;
+  rows: Record<string, unknown>[];
+  columns: string[];
+  error: string | null;
+  provider: string | null;
+  history: { role: string; content: string }[];
+}
+
+export async function chatAsk(storymapId: string, message: string): Promise<ChatResponse> {
+  const r = await fetch(`${API_BASE}/chat/${storymapId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!r.ok) throw new Error(`chat failed: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
 interface AnalyzeBody {
   network_id: string;
   user_intent?: string;

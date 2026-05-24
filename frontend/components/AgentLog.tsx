@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { analyzeStream } from "@/lib/api";
 import type { Archetype } from "./ArchetypePicker";
+import ProgressTracker from "./ProgressTracker";
 
 type Event = { kind: string; payload: Record<string, unknown> };
 
@@ -54,19 +55,30 @@ export default function AgentLog({ archetypes }: { archetypes?: Archetype[] }) {
 
   if (!networkId) return <p className="text-warn">No network id in URL.</p>;
 
+  const hasError = events.some((ev) => ev.kind === "error");
+
   return (
-    <div className="space-y-3 font-mono text-sm">
-      {events.map((ev, i) => {
-        const isError = ev.kind === "error";
-        return (
-          <div key={i} className={`flex gap-3 ${isError ? "p-3 bg-warn/10 border border-warn/40 rounded" : ""}`}>
-            <span className={`shrink-0 w-32 ${isError ? "text-warn font-bold" : "text-muted"}`}>
-              {ev.kind}
-            </span>
-            <span className={isError ? "text-warn" : "text-ink"}>{summarise(ev)}</span>
-          </div>
-        );
-      })}
+    <div>
+      <ProgressTracker events={events} hasError={hasError} />
+      <details className="mb-3">
+        <summary className="cursor-pointer text-xs uppercase tracking-wider text-muted mb-2">
+          Event log ({events.length})
+        </summary>
+        <div className="space-y-2 font-mono text-xs mt-2">
+          {events.map((ev, i) => {
+            const isError = ev.kind === "error";
+            return (
+              <div key={i} className={`flex gap-3 ${isError ? "p-3 bg-warn/10 border border-warn/40 rounded" : ""}`}>
+                <span className={`shrink-0 w-32 ${isError ? "text-warn font-bold" : "text-muted"}`}>
+                  {ev.kind}
+                </span>
+                <span className={isError ? "text-warn" : "text-ink"}>{summarise(ev)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </details>
+
       {clarify && !answer && (
         <div className="mt-8 p-6 bg-paper border rounded">
           <p className="font-serif text-xl mb-4">{clarify.question}</p>

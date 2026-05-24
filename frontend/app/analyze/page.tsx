@@ -26,9 +26,8 @@ function AnalyzeInner() {
   return (
     <>
       <h1 className="font-serif text-3xl mb-2">The agent is thinking…</h1>
-      <p className="text-muted mb-8">
-        Running <span className="text-ink font-medium">{archetypes.join(" + ")}</span>. Each step
-        is a real decision: parse, classify, geocode, route, score, narrate.
+      <p className="text-muted mb-6">
+        Running <span className="text-ink font-medium">{archetypes.join(" + ")}</span>.
       </p>
       <AgentLog archetypes={archetypes} />
     </>
