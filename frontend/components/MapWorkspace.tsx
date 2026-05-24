@@ -139,9 +139,18 @@ export default function MapWorkspace() {
     }
   }, [busy, beautifying, layers]);
 
-  // ----- Layer toggle -----
+  // ----- Layer toggle / remove -----
   const handleToggleLayer = useCallback((id: string, visible: boolean) => {
     setLayerVisibility((prev) => ({ ...prev, [id]: visible }));
+  }, []);
+
+  const handleRemoveLayer = useCallback((id: string) => {
+    setLayers((prev) => prev.filter((l) => l.id !== id));
+    setLayerVisibility((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   }, []);
 
   // ----- Storymap -----
@@ -158,6 +167,16 @@ export default function MapWorkspace() {
   // ----- Derived: dataset-aware chat suggestions -----
   const chatSuggestions = useMemo(() => deriveSuggestions(network), [network]);
   const networkSummary = useMemo(() => deriveNetworkSummary(network), [network]);
+
+  // Layer labels for the "/" autocomplete in chat.
+  const layerNames = useMemo(() => layers.map((l) => l.id), [layers]);
+
+  // Beautify result summary for the panel notice strip.
+  const beautifyNotice = useMemo(() => {
+    if (beautifyLog.length === 0) return null;
+    const last = beautifyLog[beautifyLog.length - 1];
+    return `${last.notes} (${last.provider ?? "vision"})`;
+  }, [beautifyLog]);
   const lastEventLine = useMemo(() => lastInterestingLine(events), [events]);
   const headerStatus = useMemo(() => {
     if (beautifying) return "Beautifying";
@@ -183,22 +202,29 @@ export default function MapWorkspace() {
             autoFit
           />
 
-          {/* Empty state */}
+          {/* Empty state — Aino-style display type, paper grain */}
           {!network && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="pointer-events-auto max-w-md text-center bg-canvas/95 backdrop-blur rounded-xl shadow-soft px-7 py-6 border border-border">
-                <h1 className="text-2xl font-semibold mb-2">Tochka</h1>
-                <p className="text-sm text-muted mb-5">
-                  Drop a CSV of locations. Pick a workflow.
-                  Ask the data anything spatial.
+              <div className="pointer-events-auto max-w-lg text-center surface-grain rounded-2xl shadow-soft px-10 py-9 border border-border">
+                <div className="display text-5xl text-ink mb-2 leading-none">Tochka</div>
+                <p className="text-sm text-muted mb-6 leading-relaxed max-w-sm mx-auto">
+                  Spatial intelligence for Hong Kong. Drop a CSV of locations, run a workflow, ask the data anything spatial.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowUpload(true)}
-                  className="rounded bg-accent-500 hover:bg-accent-600 text-white px-5 py-2 text-sm font-medium"
-                >
-                  Upload network CSV
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUpload(true)}
+                    className="rounded-full accent-gradient text-canvas px-5 py-2 text-sm font-medium shadow-soft hover:shadow-pop transition"
+                  >
+                    Upload network CSV
+                  </button>
+                  <a
+                    href="/about"
+                    className="rounded-full border border-border text-ink hover:border-accent-300 px-4 py-2 text-sm transition"
+                  >
+                    What is this?
+                  </a>
+                </div>
               </div>
             </div>
           )}
@@ -237,12 +263,15 @@ export default function MapWorkspace() {
           layers={layers}
           layerVisibility={layerVisibility}
           onToggleLayer={handleToggleLayer}
+          onRemoveLayer={handleRemoveLayer}
           storymapReady={Boolean(storymapId)}
           onOpenStorymap={handleOpenStorymap}
           beautifying={beautifying}
           onBeautify={handleBeautify}
+          beautifyNotice={beautifyNotice}
           storymapIdForChat={storymapId}
           chatSuggestions={chatSuggestions}
+          layerNames={layerNames}
         />
       </main>
 

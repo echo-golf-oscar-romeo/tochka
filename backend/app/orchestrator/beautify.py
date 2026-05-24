@@ -174,6 +174,11 @@ async def run_beautify_turn(
     vision = get_vision()
     if not vision.has_key:
         out = _fallback_suggestions(current_styles)
+        out["notes"] = (
+            f"No vision API key configured for VISION_PROVIDER={vision.provider}. "
+            f"Set VISION_PROVIDER=openrouter + OPENROUTER_API_KEY in .env to enable real vision."
+        )
+        out["error"] = "no_api_key"
         return out
 
     prompt = USER_TEMPLATE.format(
@@ -190,7 +195,11 @@ async def run_beautify_turn(
     )
     if not raw:
         out = _fallback_suggestions(current_styles)
-        out["notes"] = "Vision call failed; applied a small hand-rolled refinement."
+        out["notes"] = (
+            f"Vision call to '{vision.provider}' ({vision.model}) returned nothing — "
+            "check API key, model availability, or rate limit."
+        )
+        out["error"] = "vision_call_failed"
         return out
 
     parsed = _extract_json(raw)

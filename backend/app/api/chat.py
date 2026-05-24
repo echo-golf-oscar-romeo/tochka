@@ -82,3 +82,40 @@ async def chat(storymap_id: str, body: ChatBody) -> ChatResponse:
 @router.get("/{storymap_id}/history", response_model=list[dict[str, str]])
 async def get_chat_history(storymap_id: str) -> list[dict[str, str]]:
     return store.chat_histories.get(storymap_id, [])
+
+
+@router.post("/network/{network_id}", response_model=ChatResponse)
+async def chat_network(network_id: str, body: ChatBody) -> ChatResponse:
+    """Chat against a network even before any analysis storymap exists.
+
+    Same machinery as /chat/{storymap_id}, but the history is keyed by
+    the network_id and there's no storymap summary to feed into the prompt.
+    """
+    network = store.networks.get(network_id)
+    if network is None:
+        raise HTTPException(404, "Unknown network — upload first.")
+
+    history_key = f"net:{network_id}"
+    history = store.chat_histories.setdefault(history_key, [])
+
+    result = await run_chat_turn(
+        network=network,
+        history=history,
+        user_message=body.message,
+        storymap_summary=None,
+    )
+
+    history.append({"role": "user", "content": body.message})
+    history.append({"role": "assistant", "content": result["answer"]})
+    if len(history) > 40:
+        del history[: len(history) - 40]
+
+    return ChatResponse(
+        answer=result["answer"],
+        sql=result.get("sql"),
+        rows=result.get("rows", []),
+        columns=result.get("columns", []),
+        error=result.get("error"),
+        provider=result.get("provider"),
+        history=list(history),
+    )

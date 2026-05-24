@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { chatAsk, type ChatResponse } from "@/lib/api";
+import { chatAsk, chatNetwork, type ChatResponse } from "@/lib/api";
 import ChatMap, { type ChatPoint } from "./ChatMap";
 
 interface Message {
@@ -15,9 +15,15 @@ interface Message {
 }
 
 interface Props {
-  storymapId: string;
+  /** If a storymap exists for the current network, prefer that endpoint
+   *  so the chat sees the storymap's summary context. Else, chat against
+   *  the network directly. */
+  storymapId?: string | null;
+  networkId?: string | null;
   /** Per-network suggestions, computed by the workspace. */
   suggestions?: string[];
+  /** Names of layers currently on the map, used for "/" autocomplete. */
+  layerNames?: string[];
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -26,11 +32,14 @@ const DEFAULT_SUGGESTIONS = [
   "Show competitor brands by district.",
 ];
 
-export default function ChatPanel({ storymapId, suggestions }: Props) {
+export default function ChatPanel({ storymapId, networkId, suggestions, layerNames }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [slashOpen, setSlashOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const handleId = storymapId ?? networkId ?? null;
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -38,14 +47,23 @@ export default function ChatPanel({ storymapId, suggestions }: Props) {
     }
   }, [messages, busy]);
 
+  // Reset history when the current handle changes (different upload).
+  useEffect(() => {
+    setMessages([]);
+    setInput("");
+  }, [networkId]);
+
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy || !handleId) return;
     setInput("");
+    setSlashOpen(false);
     setMessages((m) => [...m, { role: "user", content: trimmed }]);
     setBusy(true);
     try {
-      const r: ChatResponse = await chatAsk(storymapId, trimmed);
+      const r: ChatResponse = storymapId
+        ? await chatAsk(storymapId, trimmed)
+        : await chatNetwork(networkId!, trimmed);
       setMessages((m) => [
         ...m,
         {
@@ -81,14 +99,33 @@ export default function ChatPanel({ storymapId, suggestions }: Props) {
 
   const sug = suggestions && suggestions.length > 0 ? suggestions : DEFAULT_SUGGESTIONS;
 
+  // Slash menu — current layer names as completions.
+  const slashOptions = useMemo(() => {
+    const head = input.split(/\s+/).pop() ?? "";
+    if (!head.startsWith("/")) return [];
+    const q = head.slice(1).toLowerCase();
+    return (layerNames ?? []).filter((n) => n.toLowerCase().includes(q));
+  }, [input, layerNames]);
+
+  function pickSlash(option: string) {
+    // Replace the in-progress /token with the chosen quoted layer name.
+    const tokens = input.split(/\s+/);
+    tokens[tokens.length - 1] = `"${option}"`;
+    setInput(tokens.join(" ") + " ");
+    setSlashOpen(false);
+  }
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-canvas">
       {mapPoints.length > 0 && (
         <div className="shrink-0 border-b border-border">
-          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-muted">
-            {mapPoints.length} on the map
+          <div className="px-3 pt-2 pb-1 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wider text-muted">
+              {mapPoints.length} on the chat map
+            </span>
+            <span className="text-[10px] text-subtle">geo answer</span>
           </div>
-          <div className="h-52 w-full">
+          <div className="h-48 w-full">
             <ChatMap points={mapPoints} />
           </div>
         </div>
@@ -98,7 +135,7 @@ export default function ChatPanel({ storymapId, suggestions }: Props) {
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="text-muted text-xs leading-relaxed">
-              The agent writes a read-only SELECT against your network + the HK competitor table, runs it, and explains the result.
+              The agent writes a read-only spatial SELECT against your network + the HK competitor table, runs it, and explains the result. Type <code className="text-ink">/</code> to reference a layer.
             </p>
             <div className="space-y-1.5">
               {sug.map((s) => (
@@ -106,7 +143,8 @@ export default function ChatPanel({ storymapId, suggestions }: Props) {
                   key={s}
                   type="button"
                   onClick={() => send(s)}
-                  className="block w-full text-left rounded border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-xs text-ink"
+                  disabled={!handleId || busy}
+                  className="block w-full text-left rounded border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-xs text-ink disabled:opacity-50"
                 >
                   {s}
                 </button>
@@ -130,23 +168,55 @@ export default function ChatPanel({ storymapId, suggestions }: Props) {
           e.preventDefault();
           send(input);
         }}
-        className="shrink-0 border-t border-border p-2 flex gap-2"
+        className="shrink-0 border-t border-border p-2 relative"
       >
-        <input
-          type="text"
-          placeholder="Ask about your network…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={busy}
-          className="flex-1 rounded border border-border focus:border-accent-500 focus:ring-1 focus:ring-accent-100 outline-none px-3 py-1.5 text-sm disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={busy || !input.trim()}
-          className="rounded bg-accent-500 text-white px-3 py-1.5 text-sm hover:bg-accent-600 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Send
-        </button>
+        {slashOpen && slashOptions.length > 0 && (
+          <div className="absolute bottom-full left-2 right-2 mb-1 rounded border border-border bg-canvas shadow-pop max-h-44 overflow-y-auto">
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-muted border-b border-border">
+              Insert layer
+            </div>
+            <ul>
+              {slashOptions.map((opt) => (
+                <li key={opt}>
+                  <button
+                    type="button"
+                    onClick={() => pickSlash(opt)}
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent-50 hover:text-accent-700"
+                  >
+                    {opt}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder={handleId ? "Ask about your network…" : "Upload a network first"}
+            value={input}
+            onChange={(e) => {
+              const v = e.target.value;
+              setInput(v);
+              const head = v.split(/\s+/).pop() ?? "";
+              setSlashOpen(head.startsWith("/"));
+            }}
+            onFocus={() => {
+              const head = input.split(/\s+/).pop() ?? "";
+              if (head.startsWith("/")) setSlashOpen(true);
+            }}
+            onBlur={() => setTimeout(() => setSlashOpen(false), 150)}
+            disabled={busy || !handleId}
+            className="flex-1 rounded border border-border focus:border-accent-500 focus:ring-2 focus:ring-accent-100 outline-none px-3 py-1.5 text-sm disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={busy || !input.trim() || !handleId}
+            className="rounded bg-ink hover:bg-accent-700 text-canvas px-3 py-1.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            Send
+          </button>
+        </div>
       </form>
     </div>
   );
@@ -156,15 +226,15 @@ function MessageBubble({ m }: { m: Message }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="rounded-lg bg-accent-500 text-white px-3 py-2 max-w-[85%] text-sm">{m.content}</div>
+        <div className="rounded-lg bg-ink text-canvas px-3 py-2 max-w-[85%] text-sm shadow-card">{m.content}</div>
       </div>
     );
   }
   return (
     <div>
       <div
-        className={`rounded-lg px-3 py-2 max-w-[97%] text-sm ${
-          m.error ? "bg-accent-50 border border-accent-200 text-accent-900" : "bg-surface border border-border text-ink"
+        className={`rounded-lg px-3 py-2 max-w-[97%] text-sm shadow-card ${
+          m.error ? "bg-highlight-50 border border-highlight-100 text-ink" : "bg-surface border border-border text-ink"
         }`}
       >
         <p className="whitespace-pre-wrap">{m.content}</p>
@@ -174,7 +244,7 @@ function MessageBubble({ m }: { m: Message }) {
       </div>
       {m.sql && (
         <details className="mt-1 text-xs">
-          <summary className="cursor-pointer text-muted">SQL ({(m.rows ?? []).length} rows)</summary>
+          <summary className="cursor-pointer text-muted">SQL · {(m.rows ?? []).length} rows</summary>
           <pre className="mt-1 p-2 bg-surface border border-border rounded overflow-x-auto font-mono whitespace-pre text-[11px]">
             {m.sql}
           </pre>

@@ -1,14 +1,15 @@
+/* @import MUST come before @tailwind directives per the CSS spec. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* --- Inter via Google Fonts: keep the network call narrow ---------- */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @layer base {
   html {
     color-scheme: light;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   body {
     @apply bg-canvas text-ink;
@@ -19,17 +20,20 @@
     @apply tracking-tightish;
     font-weight: 600;
   }
-  /* MapLibre attribution: very small, low-contrast — Aino-style */
+  .display {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  /* MapLibre attribution */
   .maplibregl-ctrl-attrib {
-    @apply text-[10px] !text-muted/80;
-    background: rgba(255,255,255,0.6) !important;
+    @apply text-[10px] !text-muted;
+    background: rgba(255,255,255,0.7) !important;
   }
-  .maplibregl-canvas {
-    outline: none;
-  }
+  .maplibregl-canvas { outline: none; }
 }
 
-/* --- The storymap shell — kept compatible with the legacy /story/[id] -- */
+/* Storymap shell kept compatible with the legacy /story/[id] */
 .storymap-shell {
   display: grid;
   grid-template-columns: 1fr;
@@ -49,5 +53,17 @@
   @apply min-h-screen flex items-center px-8 py-24 max-w-prose mx-auto;
 }
 
-/* Hide the default MapLibre logo only in workspace contexts that opt in. */
 .no-logo .maplibregl-ctrl-logo { display: none !important; }
+
+/* A subtle paper-like noise texture used on the empty-state card and
+   the header background so things don't read as flat-fill. */
+.surface-grain {
+  background-image:
+    radial-gradient(rgba(15,23,42,0.025) 1px, transparent 1px),
+    linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+  background-size: 6px 6px, 100% 100%;
+}
+
+.accent-gradient {
+  background: linear-gradient(135deg, #5b6cff 0%, #4657fa 50%, #2d3eea 100%);
+}
