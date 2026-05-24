@@ -14,7 +14,16 @@ const LAYER_LABELS: Record<string, string> = {
   "isochrones": "10-min walking catchments",
   "competitors": "HK competitor banks",
   "anomalies-under": "Under-performing branches",
+  "cannibalisation": "Cannibalisation pairs (<800m)",
+  "opportunity": "Opportunity hexes",
 };
+
+
+function deriveLabel(layerId: string): string {
+  if (LAYER_LABELS[layerId]) return LAYER_LABELS[layerId];
+  if (layerId.startsWith("chat-")) return `Chat result · ${layerId.slice(5)}`;
+  return layerId;
+}
 
 export default function LayersList({ layers, visibility, onToggle, onRemove }: Props) {
   if (layers.length === 0) {
@@ -29,7 +38,7 @@ export default function LayersList({ layers, visibility, onToggle, onRemove }: P
       {layers.map((layer) => {
         const visible = visibility[layer.id] !== false;
         const count = featureCount(layer);
-        const label = LAYER_LABELS[layer.id] ?? layer.id;
+        const label = deriveLabel(layer.id);
         const swatch = layerSwatch(layer);
         return (
           <li

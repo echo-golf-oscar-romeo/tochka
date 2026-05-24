@@ -153,6 +153,37 @@ export default function MapWorkspace() {
     });
   }, []);
 
+  // ----- Chat → Map layer -----
+  const chatLayerCountRef = useRef(0);
+  const handleAddPointsToMap = useCallback((
+    label: string,
+    points: { id: string; lat: number; lng: number; label?: string }[],
+  ) => {
+    chatLayerCountRef.current += 1;
+    const layerId = `chat-${chatLayerCountRef.current}`;
+    const features = points.map((p) => ({
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
+      properties: { id: p.id, name: p.label ?? "" },
+    }));
+    const layer: StoryLayer = {
+      id: layerId,
+      kind: "geojson",
+      data: { type: "FeatureCollection", features },
+      paint: {
+        "circle-color": "#d97706",       // warm complement — distinguishes chat layers
+        "circle-radius": 6,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1.5,
+      },
+    };
+    setLayers((prev) => [...prev, layer]);
+    setLayerVisibility((prev) => ({ ...prev, [layerId]: true }));
+    // Silently record the label for the next layers list view
+    chatLayerLabelsRef.current[layerId] = label;
+  }, []);
+  const chatLayerLabelsRef = useRef<Record<string, string>>({});
+
   // ----- Storymap -----
   const handleOpenStorymap = useCallback(async () => {
     if (!storymapId) return;
@@ -272,6 +303,7 @@ export default function MapWorkspace() {
           storymapIdForChat={storymapId}
           chatSuggestions={chatSuggestions}
           layerNames={layerNames}
+          onAddPointsToMap={handleAddPointsToMap}
         />
       </main>
 
@@ -331,6 +363,7 @@ function deriveSuggestions(net: UploadResponse | null): string[] {
 function lastInterestingLine(events: AgentEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
+    if (ev.kind === "plan_narrative") return String(ev.payload?.text ?? "");
     if (ev.kind === "thought") return String(ev.payload?.text ?? "");
     if (ev.kind === "tool_call") return `running ${ev.payload?.tool}…`;
     if (ev.kind === "tool_result") return `← ${ev.payload?.tool}`;

@@ -35,6 +35,7 @@ interface Props {
   storymapIdForChat: string | null;
   chatSuggestions: string[];
   layerNames: string[];
+  onAddPointsToMap?: (label: string, points: { id: string; lat: number; lng: number; label?: string }[]) => void;
 }
 
 const WORKFLOWS: { id: Workflow; label: string; sub: string }[] = [
@@ -49,7 +50,7 @@ export default function WorkspacePanel(props: Props) {
     activeWorkflow, busy, onRunWorkflow,
     layers, layerVisibility, onToggleLayer, onRemoveLayer,
     storymapReady, onOpenStorymap, beautifying, onBeautify, beautifyNotice,
-    storymapIdForChat, chatSuggestions, layerNames,
+    storymapIdForChat, chatSuggestions, layerNames, onAddPointsToMap,
   } = props;
   const disabled = !networkId || busy;
 
@@ -160,6 +161,7 @@ export default function WorkspacePanel(props: Props) {
               networkId={networkId}
               suggestions={chatSuggestions}
               layerNames={layerNames}
+              onAddPointsToMap={onAddPointsToMap}
             />
           ) : (
             <div className="px-4 py-3 text-xs text-muted">

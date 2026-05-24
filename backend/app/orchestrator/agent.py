@@ -18,12 +18,14 @@ from app.config import get_settings
 from app.models.analysis import AnalysisRequest, Archetype, DataLayerPlan
 from app.models.network import Network
 from app.orchestrator.decision import needs_clarification, pick_methodology
-from app.orchestrator.llm import llm_clarify, llm_narrate
+from app.orchestrator.llm import llm_clarify, llm_narrate, llm_plan
 from app.tools import (
     competitors,
     demand,
     geocoding,
     modeling,
+    opportunity,
+    rationalisation,
     reachability,
     viz,
 )
@@ -35,6 +37,18 @@ FALLBACK_CLARIFY = (
     "SME access, or both?"
 )
 CLARIFY_OPTIONS = ["retail", "sme", "both"]
+
+
+def _fallback_plan_narrative(archetypes: list[str], n_locations: int) -> str:
+    bits: list[str] = []
+    if "diagnose" in archetypes:
+        bits.append("flag under- and over-performing branches against a Huff baseline")
+    if "expand" in archetypes:
+        bits.append("score every 250 m cell in HK for uncovered demand and surface the top candidates")
+    if "rationalise" in archetypes:
+        bits.append("draw cannibalisation lines between own branches under 800 m apart")
+    body = "; ".join(bits) if bits else "review the network and produce a storymap"
+    return f"I'll process your {n_locations} locations and {body}."
 
 
 @dataclass
@@ -116,6 +130,29 @@ class Orchestrator:
         )
         yield AgentEvent("plan", {"plan": [p.model_dump() for p in plan]})
 
+        # LLM-narrated plan — what's about to happen, in one sentence,
+        # specific to the chosen archetype(s). Falls back to a hand-rolled
+        # string when the LLM isn't available so the demo still reads as
+        # agentic on stage.
+        archetype_values = [a.value for a in chosen_archetypes]
+        archetype_tool_map = {
+            "diagnose":    ["isochrone_walk", "competitors_in_radius", "population_in_polygon",
+                            "huff_model", "anomaly_detect"],
+            "expand":      ["isochrone_walk", "competitors_in_radius", "population_in_polygon",
+                            "huff_model", "opportunity_hexes"],
+            "rationalise": ["isochrone_walk", "competitors_in_radius", "huff_model",
+                            "cannibalisation_pairs"],
+        }
+        tool_names = sorted({t for a in archetype_values for t in archetype_tool_map.get(a, [])})
+        narrated_plan = await llm_plan(network, archetypes=archetype_values, tool_names=tool_names)
+        if not narrated_plan:
+            narrated_plan = _fallback_plan_narrative(archetype_values, len(network.locations))
+        yield AgentEvent("plan_narrative", {
+            "text": narrated_plan,
+            "archetypes": archetype_values,
+            "tool_sequence": tool_names,
+        })
+
         # ===== QWEN-AGENT-HOOK =====
         # In production, hand `network`, `request`, and the tool registry to
         # qwen_agent.Assistant and let it pick tools turn by turn. For the
@@ -149,12 +186,44 @@ class Orchestrator:
         scores = await modeling.huff_model(network.locations, comp, pop)
         yield AgentEvent("tool_result", {"tool": "huff_model", "n_scored": len(scores)})
 
-        yield AgentEvent("tool_call", {"tool": "anomaly_detect"})
-        anomalies = await modeling.anomaly_detect(scores)
-        yield AgentEvent("tool_result", {"tool": "anomaly_detect", "outliers": len(anomalies)})
-        yield AgentEvent("layer_added", {
-            "layer": viz.build_anomalies_layer(anomalies, network).model_dump(),
-        })
+        # ---- Archetype-specific branches ----------------------------------
+        # Each archetype gets its own *additional* tool + layer on top of the
+        # shared base (network, isochrones, competitors, population, huff).
+        archetype_ids = {a.value for a in chosen_archetypes}
+        anomalies: list[dict] = []
+
+        # Diagnose -> anomaly detection on Huff baseline.
+        if "diagnose" in archetype_ids:
+            yield AgentEvent("tool_call", {"tool": "anomaly_detect"})
+            anomalies = await modeling.anomaly_detect(scores)
+            yield AgentEvent("tool_result", {"tool": "anomaly_detect", "outliers": len(anomalies)})
+            yield AgentEvent("layer_added", {
+                "layer": viz.build_anomalies_layer(anomalies, network).model_dump(),
+            })
+
+        # Expand -> opportunity hex grid (uncovered demand).
+        if "expand" in archetype_ids:
+            yield AgentEvent("tool_call", {"tool": "opportunity_hexes", "top_n": 60})
+            opp_cells = await opportunity.opportunity_hexes(network.locations, top_n=60)
+            yield AgentEvent("tool_result", {"tool": "opportunity_hexes", "n_cells": len(opp_cells)})
+            yield AgentEvent("layer_added", {
+                "layer": viz.build_opportunity_layer(opp_cells).model_dump(),
+            })
+
+        # Rationalise -> cannibalisation lines between own-network branches.
+        if "rationalise" in archetype_ids:
+            yield AgentEvent("tool_call", {"tool": "cannibalisation_pairs", "max_distance_m": 800})
+            pairs = await rationalisation.cannibalisation_pairs(network.locations, max_distance_m=800)
+            yield AgentEvent("tool_result", {"tool": "cannibalisation_pairs", "n_pairs": len(pairs)})
+            yield AgentEvent("layer_added", {
+                "layer": viz.build_cannibalisation_layer(pairs).model_dump(),
+            })
+
+        # If anomalies weren't computed for a non-diagnose flow, run a quick
+        # one anyway so the storymap section that talks about anomalies has
+        # real numbers — but skip emitting it as a layer.
+        if not anomalies:
+            anomalies = await modeling.anomaly_detect(scores)
 
         # Compose the storymap scaffold (layers + section structure + fallback prose).
         yield AgentEvent("tool_call", {"tool": "make_storymap_section"})

@@ -112,6 +112,37 @@ def build_competitors_layer(competitors: list[dict]) -> Layer:
     )
 
 
+def build_cannibalisation_layer(pairs: list[dict]) -> Layer:
+    """Lines between own-network branches under the cannibalisation threshold."""
+    return make_layer(
+        "cannibalisation", "geojson", _fc(pairs),
+        paint={
+            "line-color": "#d97706",   # complementary highlight (warm amber)
+            "line-width": 2.5,
+            "line-opacity": 0.85,
+        },
+    )
+
+
+def build_opportunity_layer(cells: list[dict]) -> Layer:
+    """Hex-grid cells coloured by uncovered-demand score."""
+    return make_layer(
+        "opportunity", "geojson", _fc(cells),
+        paint={
+            "fill-color": [
+                "interpolate", ["linear"], ["get", "score"],
+                0.0, "#dbe0ff",
+                0.5, "#8b97ff",
+                1.0, "#1f298f",
+            ],
+            "fill-opacity": 0.55,
+            "line-color": "#1f298f",
+            "line-width": 0.5,
+            "line-opacity": 0.4,
+        },
+    )
+
+
 def build_anomalies_layer(anomalies: list[dict], network: Network) -> Layer:
     """Big red rings on under-performers."""
     under_ids = {a["location_id"] for a in anomalies if a.get("kind") == "under"}
