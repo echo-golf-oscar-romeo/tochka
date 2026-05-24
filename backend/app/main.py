@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analyze, storymap, upload
+from app.api import analyze, chat, storymap, upload
 from app.clients.ddb import close_duckdb, get_duckdb
 from app.config import get_settings
 
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(upload.router)
     app.include_router(analyze.router)
     app.include_router(storymap.router)
+    app.include_router(chat.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

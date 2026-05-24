@@ -14,6 +14,8 @@ from typing import Any
 class _Store:
     networks: dict[str, Any] = field(default_factory=dict)
     storymaps: dict[str, Any] = field(default_factory=dict)
+    # Per-storymap chat history: list of {role, content} dicts.
+    chat_histories: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 store = _Store()
