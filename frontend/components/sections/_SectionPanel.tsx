@@ -26,7 +26,7 @@ export default function SectionPanel({
       />
       {Object.keys(section.kpis ?? {}).length > 0 && (
         <dl className="grid grid-cols-2 gap-4 mb-6">
-          {Object.entries(section.kpis).map(([k, v]) => (
+          {Object.entries(section.kpis ?? {}).map(([k, v]) => (
             <div key={k}>
               <dt className="text-xs uppercase tracking-wider text-muted">{k}</dt>
               <dd className="font-serif text-2xl">{v}</dd>
