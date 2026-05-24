@@ -43,6 +43,95 @@ def _fc(features: list[dict]) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
+# ---------------------------------------------------------------------------
+# Per-tool layer builders — used both for live SSE streaming during analyze
+# and for the final storymap composition. Keeps the canvas styling consistent
+# whether the user is watching the map fill in or reading the storymap later.
+# ---------------------------------------------------------------------------
+
+def build_user_network_layer(network: Network) -> Layer:
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [loc.lng, loc.lat]},
+            "properties": {
+                "id": loc.id,
+                "name": loc.name,
+                "capacity": loc.capacity,
+                "actual_volume": loc.actual_volume,
+            },
+        }
+        for loc in network.locations
+        if loc.lat is not None and loc.lng is not None
+    ]
+    return make_layer(
+        "user-network", "geojson", _fc(features),
+        paint={
+            "circle-color": PALETTE["user_network"],
+            "circle-radius": 7,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 1.5,
+        },
+    )
+
+
+def build_isochrones_layer(isochrones: list[dict]) -> Layer:
+    return make_layer(
+        "isochrones", "geojson", _fc(isochrones),
+        paint={
+            "fill-color": PALETTE["isochrone"],
+            "fill-opacity": 0.13,
+            "line-color": PALETTE["isochrone"],
+            "line-width": 1,
+            "line-opacity": 0.6,
+        },
+    )
+
+
+def build_competitors_layer(competitors: list[dict]) -> Layer:
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [c["lng"], c["lat"]]},
+            "properties": c,
+        }
+        for c in competitors
+        if c.get("lat") is not None and c.get("lng") is not None
+    ]
+    return make_layer(
+        "competitors", "geojson", _fc(features),
+        paint={
+            "circle-color": PALETTE["competitor"],
+            "circle-radius": 4,
+            "circle-opacity": 0.85,
+        },
+    )
+
+
+def build_anomalies_layer(anomalies: list[dict], network: Network) -> Layer:
+    """Big red rings on under-performers."""
+    under_ids = {a["location_id"] for a in anomalies if a.get("kind") == "under"}
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [loc.lng, loc.lat]},
+            "properties": {"id": loc.id, "name": loc.name},
+        }
+        for loc in network.locations
+        if loc.id in under_ids and loc.lat is not None and loc.lng is not None
+    ]
+    return make_layer(
+        "anomalies-under", "geojson", _fc(features),
+        paint={
+            "circle-color": PALETTE["anomaly_under"],
+            "circle-radius": 11,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 2,
+            "circle-opacity": 0.85,
+        },
+    )
+
+
 async def compose_storymap(
     *,
     network: Network,
@@ -53,41 +142,18 @@ async def compose_storymap(
     scores: list[dict],
     anomalies: list[dict],
 ) -> StorymapResult:
-    """Assemble the 5-section storymap from tool outputs."""
+    """Assemble the 5-section storymap from tool outputs.
 
-    # Locations layer
-    user_features = [
-        {
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [loc.lng, loc.lat]},
-            "properties": {"id": loc.id, "name": loc.name},
-        }
-        for loc in network.locations if loc.lat is not None and loc.lng is not None
-    ]
-    layer_user = make_layer("user-network", "geojson", _fc(user_features),
-                            paint={"circle-color": PALETTE["user_network"], "circle-radius": 6})
-
-    layer_iso = make_layer("isochrones", "geojson", _fc(isochrones),
-                           paint={"fill-color": PALETTE["isochrone"], "fill-opacity": 0.15,
-                                  "line-color": PALETTE["isochrone"], "line-width": 1})
-
-    competitor_features = [
-        {"type": "Feature",
-         "geometry": {"type": "Point", "coordinates": [c["lng"], c["lat"]]},
-         "properties": c}
-        for c in competitors
-    ]
-    layer_comp = make_layer("competitors", "geojson", _fc(competitor_features),
-                            paint={"circle-color": PALETTE["competitor"], "circle-radius": 4})
-
-    # Anomaly highlight
-    anomaly_ids = {a["location_id"] for a in anomalies if a["kind"] == "under"}
-    anomaly_features = [f for f in user_features if f["properties"]["id"] in anomaly_ids]
-    layer_anom = make_layer("anomalies-under", "geojson", _fc(anomaly_features),
-                            paint={"circle-color": PALETTE["anomaly_under"], "circle-radius": 9,
-                                   "circle-stroke-color": "#fff", "circle-stroke-width": 2})
+    Uses the same per-tool layer builders the orchestrator emits live during
+    /analyze, so the storymap and the live canvas show identical geometries.
+    """
+    layer_user = build_user_network_layer(network)
+    layer_iso = build_isochrones_layer(isochrones)
+    layer_comp = build_competitors_layer(competitors)
+    layer_anom = build_anomalies_layer(anomalies, network)
 
     # Centre/zoom — derive from network bbox.
+    user_features = layer_user.data["features"] if layer_user.data else []
     lats = [f["geometry"]["coordinates"][1] for f in user_features] or [22.31]
     lngs = [f["geometry"]["coordinates"][0] for f in user_features] or [114.17]
     centre = (sum(lngs) / len(lngs), sum(lats) / len(lats))

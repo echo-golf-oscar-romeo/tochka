@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
 
+    # Vision LLM (for the beautify-map agent).
+    # Provider names mirror llm_provider; the API key + base URL are reused
+    # from the matching provider by default but can be overridden.
+    vision_provider: str = "qwen"
+    vision_api_key: str = ""             # falls back to dashscope/deepseek key
+    vision_base_url: str = ""            # falls back to provider's base
+    qwen_vision_model: str = "qwen-vl-max"
+    deepseek_vision_model: str = "deepseek-vl2"
+
     # CSDI
     csdi_api_key: str = ""
     csdi_base_url: str = "https://www.als.gov.hk"
