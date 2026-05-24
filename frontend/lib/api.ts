@@ -75,26 +75,35 @@ export async function analyzeStream(
   }
   const reader = r.body.getReader();
   const decoder = new TextDecoder();
+  // The SSE spec terminates events with a blank line, which can be CRLF or LF
+  // on the wire. sse-starlette emits CRLF — `indexOf("\n\n")` won't find that
+  // because CR LF CR LF never contains two consecutive LFs. Match either.
+  const SEP_RE = /\r?\n\r?\n/;
   let buffer = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    let sep = buffer.indexOf("\n\n");
-    while (sep !== -1) {
-      const chunk = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
+    let m: RegExpExecArray | null;
+    while ((m = SEP_RE.exec(buffer)) !== null) {
+      const chunk = buffer.slice(0, m.index);
+      buffer = buffer.slice(m.index + m[0].length);
       const ev = parseSseChunk(chunk);
       if (ev) onEvent(ev);
-      sep = buffer.indexOf("\n\n");
     }
+  }
+  // Final flush — if the last event lacks a trailing blank line.
+  if (buffer.trim()) {
+    const ev = parseSseChunk(buffer);
+    if (ev) onEvent(ev);
   }
 }
 
 function parseSseChunk(chunk: string): AgentEvent | null {
   let kind = "message";
   let dataLine = "";
-  for (const line of chunk.split("\n")) {
+  // Handle either CRLF or LF line endings within an event block.
+  for (const line of chunk.split(/\r?\n/)) {
     if (line.startsWith("event:")) kind = line.slice(6).trim();
     else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
   }
