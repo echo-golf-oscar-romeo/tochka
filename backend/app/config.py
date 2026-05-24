@@ -35,13 +35,22 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
 
     # Vision LLM (for the beautify-map agent).
-    # Provider names mirror llm_provider; the API key + base URL are reused
-    # from the matching provider by default but can be overridden.
+    # Provider names: "qwen" (DashScope), "deepseek" (placeholder until
+    # DeepSeek publishes a vision API), or "openrouter" (recommended when
+    # DashScope is pending — routes to Qwen2.5-VL via OpenRouter).
+    # API key + base URL fall back to the matching provider's defaults but
+    # can be overridden via VISION_API_KEY / VISION_BASE_URL.
     vision_provider: str = "qwen"
-    vision_api_key: str = ""             # falls back to dashscope/deepseek key
-    vision_base_url: str = ""            # falls back to provider's base
+    vision_api_key: str = ""
+    vision_base_url: str = ""
     qwen_vision_model: str = "qwen-vl-max"
     deepseek_vision_model: str = "deepseek-vl2"
+
+    # OpenRouter — multi-provider routing. Works in HK; openly-licensed
+    # models like Qwen2.5-VL are cheap (~$0.40 / M input tokens).
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_vision_model: str = "qwen/qwen2.5-vl-32b-instruct"
 
     # CSDI
     csdi_api_key: str = ""

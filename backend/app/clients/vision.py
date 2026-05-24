@@ -1,12 +1,19 @@
 """Vision LLM client — analyses screenshots of the map to suggest restyling.
 
 Provider-agnostic over the OpenAI-compatible Chat Completions API with image
-inputs. Same model selection pattern as `clients/llm.py`:
+inputs. Same selection pattern as `clients/llm.py`:
 
-    VISION_PROVIDER=qwen      -> DashScope, model = qwen-vl-max (default)
-    VISION_PROVIDER=deepseek  -> DeepSeek, model = deepseek-vl2 (not yet
-                                 available on api.deepseek.com as of writing;
-                                 wired here for forward compatibility)
+    VISION_PROVIDER=qwen        -> DashScope (qwen-vl-max). Best once your
+                                   Alibaba account is active.
+    VISION_PROVIDER=openrouter  -> OpenRouter, default model
+                                   qwen/qwen2.5-vl-32b-instruct. Recommended
+                                   while DashScope is pending — works from HK,
+                                   cheap (~$0.40/M input tokens), openly
+                                   licensed Qwen-VL with vision quality very
+                                   close to qwen-vl-max.
+    VISION_PROVIDER=deepseek    -> placeholder for when DeepSeek publishes a
+                                   vision API. Today falls through to canned
+                                   suggestions.
 
 If the active provider has no API key configured the client returns None
 gracefully and the orchestrator falls back to a hand-rolled style suggestion
@@ -42,12 +49,16 @@ class VisionClient:
     def __init__(self) -> None:
         s = get_settings()
         provider = (s.vision_provider or "qwen").strip().lower()
-        if provider not in ("qwen", "deepseek"):
+        if provider not in ("qwen", "deepseek", "openrouter"):
             log.warning("Unknown VISION_PROVIDER=%r; using 'qwen'.", provider)
             provider = "qwen"
         self.provider = provider
 
-        if provider == "deepseek":
+        if provider == "openrouter":
+            self.api_key = s.vision_api_key or s.openrouter_api_key
+            self.base_url = (s.vision_base_url or s.openrouter_base_url).rstrip("/")
+            self.model = s.openrouter_vision_model
+        elif provider == "deepseek":
             self.api_key = s.vision_api_key or s.deepseek_api_key
             self.base_url = (s.vision_base_url or s.deepseek_base_url).rstrip("/")
             self.model = s.deepseek_vision_model
@@ -99,11 +110,17 @@ class VisionClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        headers: dict[str, str] = {"Authorization": f"Bearer {self.api_key}"}
+        if self.provider == "openrouter":
+            # OpenRouter uses these headers for attribution/discoverability.
+            # Both optional; included as good citizens.
+            headers["HTTP-Referer"] = "https://github.com/echo-golf-oscar-romeo/tochka"
+            headers["X-Title"] = "Tochka — location intelligence"
         try:
             r = await self._client.post(
                 f"{self.base_url}/chat/completions",
                 json=body,
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers=headers,
             )
             r.raise_for_status()
             data = r.json()

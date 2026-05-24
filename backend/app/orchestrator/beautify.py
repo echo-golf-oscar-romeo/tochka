@@ -120,6 +120,13 @@ def _sanitise_updates(updates: list[dict], known_layer_ids: set[str]) -> list[di
     return out[:4]
 
 
+def _looks_like_markdown_fence(text: str) -> str | None:
+    """OpenRouter-Qwen sometimes wraps the JSON in ```json fences. Strip those."""
+    import re as _re
+    m = _re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    return m.group(1) if m else None
+
+
 def _fallback_suggestions(current_styles: list[dict]) -> dict:
     """If the vision LLM is unavailable, propose a couple of safe nudges
     so the button still feels alive on stage."""
@@ -187,6 +194,11 @@ async def run_beautify_turn(
         return out
 
     parsed = _extract_json(raw)
+    if not parsed:
+        # OpenRouter-Qwen sometimes ships JSON wrapped in ``` fences. Try that.
+        fenced = _looks_like_markdown_fence(raw)
+        if fenced:
+            parsed = _extract_json(fenced)
     if not parsed:
         log.info("Beautify: could not parse JSON from vision output: %.200s", raw)
         out = _fallback_suggestions(current_styles)
