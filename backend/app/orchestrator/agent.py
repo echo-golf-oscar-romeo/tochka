@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from app.clients.llm import get_llm
 from app.config import get_settings
 from app.models.analysis import AnalysisRequest, Archetype, DataLayerPlan
 from app.models.network import Network
@@ -84,12 +85,13 @@ class Orchestrator:
             chosen_archetypes = default_archetypes
 
         if not archetypes and clarification_answer is None and needs_clarification(poi_type, user_intent):
-            yield AgentEvent("tool_call", {"tool": "llm_clarify"})
+            provider = get_llm().provider
+            yield AgentEvent("tool_call", {"tool": "llm_clarify", "provider": provider})
             generated = await llm_clarify(network, poi_type=poi_type, options=CLARIFY_OPTIONS)
             question = generated or FALLBACK_CLARIFY
             yield AgentEvent("tool_result", {
                 "tool": "llm_clarify",
-                "source": "qwen" if generated else "fallback",
+                "source": provider if generated else "fallback",
             })
             yield AgentEvent("clarify", {
                 "question": question,
@@ -157,10 +159,12 @@ class Orchestrator:
         # per-section progress beat in the agent log, which makes the demo read
         # as "the agent is writing this for you, live". Falls back to the
         # composed f-string when the LLM is unavailable.
+        provider = get_llm().provider
         for section in storymap.sections:
             yield AgentEvent("narrating", {
                 "section_id": section.id,
                 "title": section.title,
+                "provider": provider,
             })
             rewritten = await llm_narrate(
                 section_id=section.id,

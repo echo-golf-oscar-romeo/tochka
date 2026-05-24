@@ -1,13 +1,21 @@
-"""DashScope (Qwen) client wrapper.
+"""LLM client — provider-agnostic over the OpenAI-compatible Chat Completions API.
 
-Uses the OpenAI-compatible endpoint at /compatible-mode/v1/chat/completions.
-Same wire format as the openai SDK, so we can swap in `openai` later without
-caller changes if we want. For now we go through httpx to avoid pinning that
-SDK.
+Both DashScope (Qwen) and DeepSeek expose the same endpoint shape:
+
+    POST {base_url}/chat/completions
+    Body: {"model", "messages": [{role, content}], "temperature", "max_tokens"}
+    Auth: Bearer <api_key>
+
+Tochka switches providers via the LLM_PROVIDER env var ("qwen" | "deepseek").
+Default is "qwen"; "deepseek" exists as a workaround while a DashScope account
+is pending activation.
 
 For the full tool-calling loop we'll graduate to qwen-agent.Assistant; see
 QWEN-AGENT-HOOK in orchestrator/agent.py. This client covers single-turn
 completions: the clarifying question and per-section narrative writing.
+
+Graceful failure: returns None on missing key, network error, or malformed
+response. Callers handle the None case by falling back to a hard-coded string.
 """
 
 from __future__ import annotations
@@ -22,12 +30,22 @@ from app.config import get_settings
 log = logging.getLogger(__name__)
 
 
-class QwenClient:
+class LLMClient:
     def __init__(self) -> None:
         s = get_settings()
-        self.api_key = s.dashscope_api_key
-        self.base_url = s.dashscope_base_url.rstrip("/")
-        self.model = s.qwen_model
+        provider = (s.llm_provider or "qwen").strip().lower()
+        if provider not in ("qwen", "deepseek"):
+            log.warning("Unknown LLM_PROVIDER=%r; falling back to 'qwen'.", provider)
+            provider = "qwen"
+        self.provider = provider
+        if provider == "deepseek":
+            self.api_key = s.deepseek_api_key
+            self.base_url = s.deepseek_base_url.rstrip("/")
+            self.model = s.deepseek_model
+        else:
+            self.api_key = s.dashscope_api_key
+            self.base_url = s.dashscope_base_url.rstrip("/")
+            self.model = s.qwen_model
         self._client = httpx.AsyncClient(timeout=30.0)
 
     @property
@@ -49,11 +67,10 @@ class QwenClient:
         """Single-turn completion.
 
         Returns the assistant text on success, or None on graceful failure
-        (no API key, network error, malformed response). Callers handle the
-        None case by falling back to a hard-coded string.
+        (no API key, network error, malformed response).
         """
         if not self.api_key:
-            log.info("Qwen: no API key set; falling back to canned text.")
+            log.info("LLM (%s): no API key set; falling back to canned text.", self.provider)
             return None
 
         body = {
@@ -76,18 +93,18 @@ class QwenClient:
                 return content.strip() or None
             return None
         except httpx.HTTPError as e:
-            log.warning("Qwen HTTP error: %s", e)
+            log.warning("LLM (%s) HTTP error: %s", self.provider, e)
             return None
         except (KeyError, IndexError, ValueError) as e:
-            log.warning("Qwen response shape unexpected: %s", e)
+            log.warning("LLM (%s) response shape unexpected: %s", self.provider, e)
             return None
 
 
-_singleton: QwenClient | None = None
+_singleton: LLMClient | None = None
 
 
-def get_qwen() -> QwenClient:
+def get_llm() -> LLMClient:
     global _singleton
     if _singleton is None:
-        _singleton = QwenClient()
+        _singleton = LLMClient()
     return _singleton

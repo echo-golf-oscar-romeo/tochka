@@ -21,10 +21,18 @@ class Settings(BaseSettings):
     app_port: int = 8000
     demo_mode: bool = True
 
+    # LLM provider — "qwen" (DashScope) or "deepseek". Both are OpenAI-compatible.
+    llm_provider: str = "qwen"
+
     # Qwen / DashScope
     dashscope_api_key: str = ""
     dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-max"
+
+    # DeepSeek (fallback while DashScope is pending activation)
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_model: str = "deepseek-chat"
 
     # CSDI
     csdi_api_key: str = ""
