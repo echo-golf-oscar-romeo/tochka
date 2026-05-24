@@ -21,6 +21,7 @@ export default function AgentLog() {
     analyzeStream(
       { network_id: networkId, clarification_answer: answer ?? undefined },
       (ev) => {
+        if (abort.signal.aborted) return;
         setEvents((es) => [...es, ev]);
         if (ev.kind === "clarify") {
           setClarify({
@@ -35,7 +36,12 @@ export default function AgentLog() {
         }
       },
       abort.signal,
-    );
+    ).catch((err) => {
+      // Cleanup-triggered aborts are expected; React 19 strict mode double-
+      // invokes effects in dev, which cancels the first stream mid-read.
+      if (err?.name === "AbortError") return;
+      console.error("analyze stream failed:", err);
+    });
     return () => abort.abort();
   }, [networkId, answer, router]);
 
