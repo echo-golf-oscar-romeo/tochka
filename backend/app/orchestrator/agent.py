@@ -121,13 +121,25 @@ class Orchestrator:
         # qwen_agent.Assistant and let it pick tools turn by turn. For the
         # skeleton, run a fixed sequence so the demo and tests are deterministic.
 
+        # Emit the user-network layer immediately so the workspace can render
+        # uploaded points before any analysis tool runs.
+        yield AgentEvent("layer_added", {
+            "layer": viz.build_user_network_layer(network).model_dump(),
+        })
+
         yield AgentEvent("tool_call", {"tool": "isochrone_walk", "minutes": 10})
         isos = await reachability.isochrone_walk(network.locations, minutes=10)
         yield AgentEvent("tool_result", {"tool": "isochrone_walk", "n_polygons": len(isos)})
+        yield AgentEvent("layer_added", {
+            "layer": viz.build_isochrones_layer(isos).model_dump(),
+        })
 
         yield AgentEvent("tool_call", {"tool": "competitors_in_radius", "radius_m": 500})
         comp = await competitors.competitors_in_radius(network.locations, radius_m=500)
         yield AgentEvent("tool_result", {"tool": "competitors_in_radius", "n": len(comp)})
+        yield AgentEvent("layer_added", {
+            "layer": viz.build_competitors_layer(comp).model_dump(),
+        })
 
         yield AgentEvent("tool_call", {"tool": "population_in_polygon"})
         pop = await demand.population_in_polygon(isos)
@@ -140,6 +152,9 @@ class Orchestrator:
         yield AgentEvent("tool_call", {"tool": "anomaly_detect"})
         anomalies = await modeling.anomaly_detect(scores)
         yield AgentEvent("tool_result", {"tool": "anomaly_detect", "outliers": len(anomalies)})
+        yield AgentEvent("layer_added", {
+            "layer": viz.build_anomalies_layer(anomalies, network).model_dump(),
+        })
 
         # Compose the storymap scaffold (layers + section structure + fallback prose).
         yield AgentEvent("tool_call", {"tool": "make_storymap_section"})
