@@ -1,16 +1,17 @@
 """LLM-backed helpers used by the orchestrator.
 
-Each helper has the same shape: real Qwen call if the API key is present and
-the call succeeds; otherwise return None and let the caller fall back to a
-hard-coded string. This keeps the demo defensible even if WiFi drops or the
-DashScope endpoint is misbehaving on the day.
+Each helper has the same shape: real LLM call if the active provider's API
+key is present and the call succeeds; otherwise return None and let the
+caller fall back to a hard-coded string. Active provider is selected by
+the LLM_PROVIDER env var (qwen | deepseek). This keeps the demo defensible
+even if WiFi drops or the provider's endpoint is misbehaving on the day.
 """
 
 from __future__ import annotations
 
 import logging
 
-from app.clients.qwen import get_qwen
+from app.clients.llm import get_llm
 from app.models.network import Network
 from app.orchestrator.prompts import (
     CLARIFY_USER_PROMPT,
@@ -40,10 +41,10 @@ async def llm_clarify(
     options: list[str],
 ) -> str | None:
     """Generate the clarifying question. Returns None on failure (caller falls back)."""
-    qwen = get_qwen()
-    if not qwen.has_key:
+    llm = get_llm()
+    if not llm.has_key:
         return None
-    text = await qwen.chat(
+    text = await llm.chat(
         messages=[
             {"role": "system", "content": SYSTEM_ORCHESTRATOR},
             {"role": "user", "content": CLARIFY_USER_PROMPT.format(
@@ -73,10 +74,10 @@ async def llm_narrate(
     callouts: list[str] | None,
 ) -> str | None:
     """Rewrite a section description. Returns None on failure (keep fallback)."""
-    qwen = get_qwen()
-    if not qwen.has_key:
+    llm = get_llm()
+    if not llm.has_key:
         return None
-    text = await qwen.chat(
+    text = await llm.chat(
         messages=[
             {"role": "system", "content": SYSTEM_ORCHESTRATOR},
             {"role": "user", "content": NARRATIVE_USER_PROMPT.format(
