@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import get_settings
-from app.models.analysis import AnalysisRequest, DataLayerPlan
+from app.models.analysis import AnalysisRequest, Archetype, DataLayerPlan
 from app.models.network import Network
 from app.orchestrator.decision import needs_clarification, pick_methodology
 from app.orchestrator.llm import llm_clarify, llm_narrate
@@ -51,6 +51,7 @@ class Orchestrator:
         network: Network,
         user_intent: str | None = None,
         clarification_answer: str | None = None,
+        archetypes: list[Archetype] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         # Q1 — what is the network?
         yield AgentEvent("thought", {"text": f"Inspecting {len(network.locations)} locations."})
@@ -60,14 +61,29 @@ class Orchestrator:
         if missing:
             yield AgentEvent("tool_call", {"tool": "als_lookup", "n": len(missing)})
             await geocoding.als_lookup(missing)
-            yield AgentEvent("tool_result", {"tool": "als_lookup", "geocoded": len(missing)})
+            geocoded_ok = sum(1 for loc in missing if loc.geocoded)
+            yield AgentEvent("tool_result", {
+                "tool": "als_lookup",
+                "geocoded": geocoded_ok,
+                "of": len(missing),
+            })
 
         # Q2 + Q3 — pick demand model and archetypes (rule-based; LLM clarifies only when needed).
-        dm, archetypes, poi_type = pick_methodology(network, user_intent, clarification_answer)
+        dm, default_archetypes, poi_type = pick_methodology(network, user_intent, clarification_answer)
         network.inferred_poi_type = poi_type
         yield AgentEvent("thought", {"text": f"POI type ≈ '{poi_type}'."})
 
-        if clarification_answer is None and needs_clarification(poi_type, user_intent):
+        # If the user picked archetypes explicitly, honour them and skip the
+        # clarify-on-banks heuristic — they already told us what they want.
+        if archetypes:
+            chosen_archetypes = list(archetypes)
+            yield AgentEvent("thought", {
+                "text": f"User-selected archetypes: {[a.value for a in chosen_archetypes]}.",
+            })
+        else:
+            chosen_archetypes = default_archetypes
+
+        if not archetypes and clarification_answer is None and needs_clarification(poi_type, user_intent):
             yield AgentEvent("tool_call", {"tool": "llm_clarify"})
             generated = await llm_clarify(network, poi_type=poi_type, options=CLARIFY_OPTIONS)
             question = generated or FALLBACK_CLARIFY
@@ -81,19 +97,19 @@ class Orchestrator:
             })
             return  # client re-calls /analyze with clarification_answer
 
-        yield AgentEvent("thought", {"text": f"Demand model: {dm}. Archetypes: {[a.value for a in archetypes]}."})
+        yield AgentEvent("thought", {"text": f"Demand model: {dm}. Archetypes: {[a.value for a in chosen_archetypes]}."})
 
         # Q4 — data plan
         plan = [
             DataLayerPlan(layer="population_grid", source="csdi.population_distribution"),
-            DataLayerPlan(layer="pedestrian_isochrones", source="csdi.pedestrian_route_search"),
-            DataLayerPlan(layer="competitors_banks", source="gmaps.parsed"),
+            DataLayerPlan(layer="pedestrian_isochrones", source="mapbox.isochrone"),
+            DataLayerPlan(layer="competitors_banks", source="osm.parsed"),
         ]
         request = AnalysisRequest(
             network_id=network.id,
             user_intent=user_intent,
             demand_model=dm,
-            archetypes=archetypes,
+            archetypes=chosen_archetypes,
             data_plan=plan,
         )
         yield AgentEvent("plan", {"plan": [p.model_dump() for p in plan]})

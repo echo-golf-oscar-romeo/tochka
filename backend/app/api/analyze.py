@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from app.models.analysis import Archetype
 from app.orchestrator.agent import Orchestrator
 from app.store import store
 
@@ -18,6 +19,9 @@ class AnalyzeBody(BaseModel):
     network_id: str
     user_intent: str | None = None
     clarification_answer: str | None = None
+    # User-picked analytical archetypes. When provided, the orchestrator skips
+    # the rule-based archetype default *and* the clarify-on-banks heuristic.
+    archetypes: list[Archetype] | None = None
 
 
 @router.post("")
@@ -30,7 +34,8 @@ async def analyze(body: AnalyzeBody):
 
     async def event_stream():
         async for event in orch.run(network, user_intent=body.user_intent,
-                                    clarification_answer=body.clarification_answer):
+                                    clarification_answer=body.clarification_answer,
+                                    archetypes=body.archetypes):
             # sse-starlette will JSON-stringify if we pass a dict; we wrap to be explicit.
             yield {"event": event.kind, "data": json.dumps(event.payload)}
             if event.kind == "storymap_ready":

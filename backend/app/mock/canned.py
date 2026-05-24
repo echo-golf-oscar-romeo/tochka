@@ -129,6 +129,10 @@ def hex_bin(bbox: tuple[float, float, float, float], resolution: int) -> list[di
 
 
 def huff_scores(locations: list[Location]) -> list[dict[str, Any]]:
+    """Synthetic Huff-style expected-demand score per location, carrying
+    capacity and actual_volume forward if the uploader provided them so
+    anomaly detection can use a real ratio rather than a pure-rank proxy.
+    """
     out: list[dict[str, Any]] = []
     for i, loc in enumerate(locations):
         score = 0.55 + 0.32 * math.sin(i * 0.7)
@@ -137,6 +141,8 @@ def huff_scores(locations: list[Location]) -> list[dict[str, Any]]:
             "name": loc.name,
             "expected_demand": int(8_000 + 5_000 * score),
             "score": round(score, 3),
+            "capacity": loc.capacity,
+            "actual_volume": loc.actual_volume,
             "rationale": (
                 f"{loc.name}: catchment of {int(15_000 + 9_000 * score):,} residents, "
                 f"{(i % 3) + 1} competitor branch(es) nearby."
@@ -146,9 +152,61 @@ def huff_scores(locations: list[Location]) -> list[dict[str, Any]]:
 
 
 def anomalies(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Bottom-3 as 'under', top-2 as 'over'."""
-    sorted_scores = sorted(scores, key=lambda s: s["score"])
+    """If actual_volume is provided on at least half the scores, run a real
+    actual-vs-expected ratio test (z-score-ish). Otherwise fall back to the
+    bottom-3 / top-2 by predicted-demand rank used in the original skeleton.
+    """
+    has_actual = [s for s in scores if s.get("actual_volume") is not None
+                                       and s.get("expected_demand")]
     out: list[dict[str, Any]] = []
+    if len(has_actual) >= max(2, len(scores) // 2):
+        ratios = []
+        for s in has_actual:
+            r = float(s["actual_volume"]) / float(s["expected_demand"])
+            ratios.append((s, r))
+        # mean + stdev across the set with actuals
+        vals = [r for _, r in ratios]
+        mean = sum(vals) / len(vals)
+        var = sum((v - mean) ** 2 for v in vals) / max(1, len(vals) - 1)
+        sd = var ** 0.5
+        thresh = max(0.10, 1.5 * sd)   # at least ±10% to flag
+        for s, r in ratios:
+            delta = r - mean
+            if delta < -thresh:
+                cap_clause = ""
+                if s.get("capacity"):
+                    util = float(s["actual_volume"]) / float(s["capacity"])
+                    cap_clause = f" Capacity utilisation {util:.0%}."
+                out.append({
+                    "location_id": s["location_id"],
+                    "kind": "under",
+                    "delta": round(delta, 3),
+                    "actual_over_expected": round(r, 3),
+                    "rationale": (
+                        f"{s['name']} actual demand {int(s['actual_volume']):,} vs expected "
+                        f"{int(s['expected_demand']):,} — {(r - 1) * 100:+.0f}% off baseline.{cap_clause}"
+                    ),
+                })
+            elif delta > thresh:
+                cap_clause = ""
+                if s.get("capacity"):
+                    util = float(s["actual_volume"]) / float(s["capacity"])
+                    cap_clause = f" Running at {util:.0%} of capacity."
+                out.append({
+                    "location_id": s["location_id"],
+                    "kind": "over",
+                    "delta": round(delta, 3),
+                    "actual_over_expected": round(r, 3),
+                    "rationale": (
+                        f"{s['name']} actual demand {int(s['actual_volume']):,} vs expected "
+                        f"{int(s['expected_demand']):,} — {(r - 1) * 100:+.0f}% above baseline.{cap_clause}"
+                    ),
+                })
+        return out
+
+    # Fallback path — no actuals, use rank as a proxy. Preserves the demo
+    # storymap when uploaders haven't provided operational columns.
+    sorted_scores = sorted(scores, key=lambda s: s["score"])
     for s in sorted_scores[:3]:
         out.append({
             "location_id": s["location_id"],

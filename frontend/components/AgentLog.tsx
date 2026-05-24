@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { analyzeStream } from "@/lib/api";
+import type { Archetype } from "./ArchetypePicker";
 
 type Event = { kind: string; payload: Record<string, unknown> };
 
-export default function AgentLog() {
+export default function AgentLog({ archetypes }: { archetypes?: Archetype[] }) {
   const params = useSearchParams();
   const router = useRouter();
   const networkId = params.get("network");
@@ -19,7 +20,11 @@ export default function AgentLog() {
     if (!networkId) return;
     const abort = new AbortController();
     analyzeStream(
-      { network_id: networkId, clarification_answer: answer ?? undefined },
+      {
+        network_id: networkId,
+        clarification_answer: answer ?? undefined,
+        archetypes: archetypes,
+      },
       (ev) => {
         if (abort.signal.aborted) return;
         setEvents((es) => [...es, ev]);
@@ -43,6 +48,8 @@ export default function AgentLog() {
       console.error("analyze stream failed:", err);
     });
     return () => abort.abort();
+    // archetypes is stable per AgentLog mount (parent re-mounts when it changes).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networkId, answer, router]);
 
   if (!networkId) return <p className="text-warn">No network id in URL.</p>;
