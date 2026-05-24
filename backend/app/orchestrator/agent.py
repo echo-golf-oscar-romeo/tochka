@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.models.analysis import AnalysisRequest, DataLayerPlan
 from app.models.network import Network
 from app.orchestrator.decision import needs_clarification, pick_methodology
-from app.orchestrator.prompts import CLARIFYING_QUESTION
+from app.orchestrator.llm import llm_clarify, llm_narrate
 from app.tools import (
     competitors,
     demand,
@@ -27,10 +27,18 @@ from app.tools import (
     viz,
 )
 
+# Hard-coded fallback question — used when DASHSCOPE_API_KEY is missing or the
+# LLM call fails. Keeps the demo loop runnable offline.
+FALLBACK_CLARIFY = (
+    "These look like bank branches. Optimise for retail customer access, "
+    "SME access, or both?"
+)
+CLARIFY_OPTIONS = ["retail", "sme", "both"]
+
 
 @dataclass
 class AgentEvent:
-    kind: str            # 'thought' | 'tool_call' | 'tool_result' | 'clarify' | 'storymap_ready' | 'done'
+    kind: str            # 'thought' | 'plan' | 'tool_call' | 'tool_result' | 'clarify' | 'narrating' | 'storymap_ready' | 'done'
     payload: dict[str, Any]
 
 
@@ -60,19 +68,16 @@ class Orchestrator:
         yield AgentEvent("thought", {"text": f"POI type ≈ '{poi_type}'."})
 
         if clarification_answer is None and needs_clarification(poi_type, user_intent):
-            summary = (
-                f"{len(network.locations)} {poi_type or 'locations'} across "
-                f"{len({loc.raw_fields.get('district', '?') for loc in network.locations})} districts."
-            )
-            # In production this hits Qwen; for the skeleton we hand back a static phrasing.
-            question = (
-                "These look like bank branches. Optimise for retail customer access, "
-                "SME access, or both?"
-            )
+            yield AgentEvent("tool_call", {"tool": "llm_clarify"})
+            generated = await llm_clarify(network, poi_type=poi_type, options=CLARIFY_OPTIONS)
+            question = generated or FALLBACK_CLARIFY
+            yield AgentEvent("tool_result", {
+                "tool": "llm_clarify",
+                "source": "qwen" if generated else "fallback",
+            })
             yield AgentEvent("clarify", {
                 "question": question,
-                "options": ["retail", "sme", "both"],
-                "prompt_used": CLARIFYING_QUESTION.format(summary=summary),
+                "options": CLARIFY_OPTIONS,
             })
             return  # client re-calls /analyze with clarification_answer
 
@@ -118,7 +123,7 @@ class Orchestrator:
         anomalies = await modeling.anomaly_detect(scores)
         yield AgentEvent("tool_result", {"tool": "anomaly_detect", "outliers": len(anomalies)})
 
-        # Compose the storymap.
+        # Compose the storymap scaffold (layers + section structure + fallback prose).
         yield AgentEvent("tool_call", {"tool": "make_storymap_section"})
         storymap = await viz.compose_storymap(
             network=network,
@@ -131,6 +136,25 @@ class Orchestrator:
         )
         storymap_id = str(uuid.uuid4())
         storymap.id = storymap_id
+
+        # Rewrite each section's description via Qwen. Sequential — produces a
+        # per-section progress beat in the agent log, which makes the demo read
+        # as "the agent is writing this for you, live". Falls back to the
+        # composed f-string when the LLM is unavailable.
+        for section in storymap.sections:
+            yield AgentEvent("narrating", {
+                "section_id": section.id,
+                "title": section.title,
+            })
+            rewritten = await llm_narrate(
+                section_id=section.id,
+                section_title=section.title,
+                fallback=section.description,
+                kpis=section.kpis,
+                callouts=section.callouts,
+            )
+            if rewritten:
+                section.description = rewritten
 
         yield AgentEvent("storymap_ready", {
             "storymap_id": storymap_id,
