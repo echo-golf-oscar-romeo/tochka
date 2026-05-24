@@ -24,9 +24,12 @@ PALETTE = {
     "anomaly_over":  "#3a7d44",    # validating green
 }
 
-CSDI_VECTOR_STYLE = os.environ.get(
-    "NEXT_PUBLIC_CSDI_VECTOR_STYLE",
-    "https://mapapi.geodata.gov.hk/gs/api/v1.0.0/styleSheet/vector",
+# Basemap style emitted into the storymap payload. Carto Positron is the
+# working default; CSDI's vector style URL currently returns 404.
+CSDI_VECTOR_STYLE = (
+    os.environ.get("NEXT_PUBLIC_BASEMAP_STYLE")
+    or os.environ.get("NEXT_PUBLIC_CSDI_VECTOR_STYLE")
+    or "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 )
 
 
