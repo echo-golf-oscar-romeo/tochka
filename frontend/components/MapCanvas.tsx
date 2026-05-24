@@ -63,12 +63,17 @@ function addLayer(map: MlMap, layer: StoryLayer) {
     const isPolygon = sample === "Polygon" || sample === "MultiPolygon";
     const isLine = sample === "LineString" || sample === "MultiLineString";
     const visual: "fill" | "line" | "circle" = isPolygon ? "fill" : isLine ? "line" : "circle";
+    // The paint object shape varies by layer type; MapLibre's union of
+    // FillLayerSpecification | LineLayerSpecification | CircleLayerSpecification
+    // can't be narrowed from our generic StoryLayer at compile time, so we
+    // cast to satisfy the union. Wrong paint keys for the chosen type will
+    // simply be ignored at runtime.
     map.addLayer({
       id: layer.id,
       type: visual,
       source: layer.id,
       paint: layer.paint ?? {},
-    });
+    } as Parameters<MlMap["addLayer"]>[0]);
   }
   // raster/vector/hex left for follow-up wiring.
 }
