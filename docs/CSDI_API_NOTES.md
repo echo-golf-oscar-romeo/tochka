@@ -45,9 +45,17 @@ As of 2026-05-24, most CSDI Map APIs and FSDT downloads are anonymous. **Verify 
 - Endpoint: TBD.
 - Use case: storymap drill-in panels with real photography.
 
-### Vector Map tiles — **wired** ✓
-- Style URL is public, no auth. MapLibre points at it directly via `NEXT_PUBLIC_CSDI_VECTOR_STYLE`.
-- Glyphs / sprites resolve through the same host.
+### Vector Map tiles — **broken upstream** ⚠️
+- The previously documented style URL
+  `https://mapapi.geodata.gov.hk/gs/api/v1.0.0/styleSheet/vector` currently
+  returns 404 ("Resource not found"). All path variants I tried also 404.
+  CSDI appears to have changed their API surface.
+- **Current workaround**: Carto Positron
+  (`https://basemaps.cartocdn.com/gl/positron-gl-style/style.json`) is the
+  default basemap. Same Aino-style aesthetic, cross-origin enabled, no auth.
+  Configurable via `NEXT_PUBLIC_BASEMAP_STYLE`.
+- When CSDI republishes a working vector style URL, set
+  `NEXT_PUBLIC_BASEMAP_STYLE` to point at it; no code changes needed.
 
 ## FSDT downloads
 
