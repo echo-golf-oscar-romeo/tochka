@@ -33,6 +33,32 @@ Banks + ATMs across Hong Kong, pre-fetched from OpenStreetMap (~1,279 rows). Thi
 | district   | VARCHAR   | **often NULL** — do NOT filter by district unless explicitly told you have a value; instead filter by bounding-box on lat/lng |
 | atm        | BOOLEAN   | true for ATM nodes; also true for banks with on-site ATM |
 
+### `kontur_pop_hex` — Hong Kong residential population (H3 r8 hex grid)
+Pre-loaded on backend startup. One row per ~0.74 km² hex covering all of Hong Kong.
+Real Kontur data when `data/kontur/kontur_pop_hk.parquet` is present, synthetic
+fall-back grid otherwise (still useful, decays from Central outwards).
+
+| column     | type    | notes |
+|------------|---------|-------|
+| h3         | VARCHAR | H3 cell id (resolution 8) |
+| lat        | DOUBLE  | cell-centre latitude  |
+| lng        | DOUBLE  | cell-centre longitude |
+| population | DOUBLE  | residents in this cell |
+| res        | INTEGER | always 8 |
+
+Use this for catchment-population queries, opportunity scoring, gravity models,
+and anywhere the user asks "how many people live within X" or "where's underserved demand?".
+
+### Dynamic `osm_<category>` — on-demand POI tables
+When the user asks something like *"find all schools in Hong Kong"*, the chat
+tool router fetches the relevant OSM amenity tag from Overpass and registers
+a table named `osm_schools` (or `osm_restaurants`, `osm_hospitals`, `osm_mtr`,
+…). Schema identical to `osm_pois` (id, name, brand, lat, lng).
+
+If the table you want isn't listed below, ask the user to describe the category
+in plain English and the router will fetch it. Don't fabricate SQL against a
+non-existent table.
+
 ### `_user_locations` — the user's uploaded network
 | column         | type    | notes |
 |----------------|---------|-------|
@@ -45,10 +71,12 @@ Banks + ATMs across Hong Kong, pre-fetched from OpenStreetMap (~1,279 rows). Thi
 
 ### What's NOT in the database (handle gracefully — see workflow below)
 - Building footprints / polygons
-- Population grid (CSDI Population Distribution FSDT — not yet loaded)
-- MTR stations, schools, hospitals, government POIs (CSDI iGeoCom — not yet loaded)
-- Walking / driving isochrones (Mapbox API — used by analysis tools but not in DuckDB)
-- Real estate, demographics, traffic, transit ridership
+- CSDI iGeoCom POIs (government services, etc.) — not yet loaded
+- Walking / driving isochrones (Mapbox API — runs as a separate chat tool)
+- Real estate, traffic, transit ridership
+
+(Population grid IS available via `kontur_pop_hex`. POIs by amenity category
+can be loaded on demand — see "Dynamic `osm_<category>`" above.)
 
 If the user asks for any of these, **return a polite "not answerable" note via the workflow rule below**. Don't write SQL against `osm_pois` to fake it — that produces empty results that confuse the user.
 

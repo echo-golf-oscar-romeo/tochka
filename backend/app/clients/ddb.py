@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 _conn: duckdb.DuckDBPyConnection | None = None
 _osm_loaded: bool = False
+_kontur_loaded: bool = False
 
 
 def get_duckdb() -> duckdb.DuckDBPyConnection:
@@ -44,11 +45,12 @@ def get_duckdb() -> duckdb.DuckDBPyConnection:
 
 
 def close_duckdb() -> None:
-    global _conn, _osm_loaded
+    global _conn, _osm_loaded, _kontur_loaded
     if _conn is not None:
         _conn.close()
         _conn = None
         _osm_loaded = False
+        _kontur_loaded = False
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +102,96 @@ def ensure_osm_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
     n = conn.execute("SELECT COUNT(*) FROM osm_pois").fetchone()[0]
     log.info("Loaded %d OSM POIs into DuckDB.", n)
     _osm_loaded = True
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Kontur population hex (H3 r8) loader
+# ---------------------------------------------------------------------------
+
+def _kontur_parquet_path() -> Path:
+    return (Path(__file__).resolve().parents[3] / "data" / "kontur" / "kontur_pop_hk.parquet").resolve()
+
+
+def _synthetic_kontur_rows() -> list[tuple]:
+    """A tiny synthetic HK population grid used when the real Kontur parquet
+    isn't available. Lets the demo + tests still run something plausible.
+
+    Generates an evenly-spaced grid across the HK bbox with a population
+    distribution that decays from the urban core (Central) outwards, so
+    opportunity-style queries return realistic-shaped output.
+    """
+    import math
+    import h3  # type: ignore[import-not-found]
+
+    # HK urban core ≈ Central (Hong Kong Island).
+    core_lat, core_lng = 22.282, 114.158
+    bbox_s, bbox_w, bbox_n, bbox_e = 22.17, 113.85, 22.55, 114.42
+    step = 0.012  # ≈1.3 km grid — coarser than Kontur r8 but adequate for fallback.
+
+    rows: list[tuple] = []
+    seen: set[str] = set()
+    lat = bbox_s
+    while lat <= bbox_n:
+        lng = bbox_w
+        while lng <= bbox_e:
+            # Decay with distance from core (great-circle, very rough).
+            dlat = lat - core_lat
+            dlng = (lng - core_lng) * math.cos(math.radians(core_lat))
+            r_km = math.hypot(dlat, dlng) * 111.0
+            pop = max(50.0, 18000.0 * math.exp(-r_km / 8.0))
+            cell = h3.latlng_to_cell(lat, lng, 8)
+            if cell in seen:
+                lng += step
+                continue
+            seen.add(cell)
+            rows.append((cell, lat, lng, pop, 8))
+            lng += step
+        lat += step
+    return rows
+
+
+def ensure_kontur_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
+    """Load Kontur HK population hex (or synthetic fallback) into `kontur_pop_hex`.
+
+    Schema: h3 VARCHAR, lat DOUBLE, lng DOUBLE, population DOUBLE, res INTEGER.
+    Idempotent. Returns True when populated (real OR synthetic).
+    """
+    global _kontur_loaded
+    if _kontur_loaded:
+        return True
+    conn = conn or get_duckdb()
+    conn.execute("DROP TABLE IF EXISTS kontur_pop_hex;")
+
+    parquet = _kontur_parquet_path()
+    if parquet.exists():
+        try:
+            conn.execute(
+                "CREATE TABLE kontur_pop_hex AS SELECT * FROM read_parquet(?)",
+                [str(parquet)],
+            )
+            n = conn.execute("SELECT COUNT(*) FROM kontur_pop_hex").fetchone()[0]
+            log.info("Loaded %d Kontur HK population hexes (real).", n)
+            _kontur_loaded = True
+            return True
+        except Exception as e:
+            log.warning("Real Kontur parquet at %s failed to load: %s — falling back to synthetic.",
+                        parquet, e)
+
+    # Synthetic fallback. Always succeeds.
+    try:
+        rows = _synthetic_kontur_rows()
+    except Exception as e:
+        log.warning("Synthetic Kontur fallback failed: %s", e)
+        return False
+
+    conn.execute(
+        "CREATE TABLE kontur_pop_hex (h3 VARCHAR, lat DOUBLE, lng DOUBLE, "
+        "population DOUBLE, res INTEGER);"
+    )
+    conn.executemany("INSERT INTO kontur_pop_hex VALUES (?, ?, ?, ?, ?)", rows)
+    log.info("Loaded %d synthetic Kontur HK hexes (no real parquet at %s).", len(rows), parquet)
+    _kontur_loaded = True
     return True
 
 

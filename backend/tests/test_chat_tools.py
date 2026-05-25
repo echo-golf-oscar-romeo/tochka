@@ -1,0 +1,62 @@
+"""Sanity tests for the chat tool intent classifier.
+
+The chat tool router is the front-line for prompt-driven layer creation
+(OSM fetch, Mapbox isochrones, H3 aggregation). These tests pin the
+classifier's behaviour so a regex tweak doesn't silently break the demo
+prompts the user is going to type on stage.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.orchestrator.chat_tools import classify
+
+
+@pytest.mark.parametrize("prompt, expected_category", [
+    ("find all the schools in hong kong and add them to the database and to the map", "schools"),
+    ("show all hospitals", "hospitals"),
+    ("load restaurants in hk", "restaurants"),
+    ("get supermarkets near central", "supermarkets"),
+    ("fetch museums", "museums"),
+    ("download all MTR stations across the territory", "mtr"),
+])
+def test_classify_osm_fetch(prompt: str, expected_category: str) -> None:
+    intent = classify(prompt)
+    assert intent is not None, f"prompt {prompt!r} should be classified"
+    assert intent.kind == "osm_fetch", intent
+    assert intent.params["category"] == expected_category, intent
+
+
+@pytest.mark.parametrize("prompt, minutes", [
+    ("show me an isochrone layer for all hsbc banks (15 minutes walking time)", 15),
+    ("draw a 10-minute walking isochrone for the user network", 10),
+    ("20 min driving catchment around HSBC banks", 20),
+])
+def test_classify_isochrone(prompt: str, minutes: int) -> None:
+    intent = classify(prompt)
+    assert intent is not None, f"prompt {prompt!r} should be classified"
+    assert intent.kind == "isochrone", intent
+    assert intent.params["minutes"] == minutes, intent
+
+
+@pytest.mark.parametrize("prompt, expected_res", [
+    ("aggregate the user network on H3 r9 with population", 9),
+    ("show me a hex grid of competitive intensity", 8),
+    ("h3 resolution 7 aggregation please", 7),
+])
+def test_classify_h3(prompt: str, expected_res: int) -> None:
+    intent = classify(prompt)
+    assert intent is not None
+    assert intent.kind == "h3_aggregate", intent
+    assert intent.params["resolution"] == expected_res, intent
+
+
+@pytest.mark.parametrize("prompt", [
+    # Plain SQL-style — must fall through to the SQL agent (None).
+    "which 10 competitor banks are closest to Central?",
+    "show all branches with their nearest competitor distance.",
+    "are any of my branches within 500m of each other?",
+])
+def test_classify_falls_through_to_sql(prompt: str) -> None:
+    assert classify(prompt) is None, f"{prompt!r} should NOT be intercepted"

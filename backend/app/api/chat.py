@@ -33,6 +33,10 @@ class ChatResponse(BaseModel):
     error: str | None = None
     provider: str | None = None
     history: list[dict[str, str]] = []
+    # When the chat tool router produced a layer (OSM fetch, isochrone,
+    # H3 aggregate), pass it straight to the frontend so it can be added
+    # to the main map without an extra round-trip.
+    layer: dict[str, Any] | None = None
 
 
 @router.post("/{storymap_id}", response_model=ChatResponse)
@@ -76,6 +80,7 @@ async def chat(storymap_id: str, body: ChatBody) -> ChatResponse:
         error=result.get("error"),
         provider=result.get("provider"),
         history=list(history),
+        layer=result.get("layer"),
     )
 
 
@@ -118,4 +123,5 @@ async def chat_network(network_id: str, body: ChatBody) -> ChatResponse:
         error=result.get("error"),
         provider=result.get("provider"),
         history=list(history),
+        layer=result.get("layer"),
     )

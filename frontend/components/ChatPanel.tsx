@@ -16,6 +16,8 @@ interface Message {
   /** The user question that produced this assistant answer — used as the
    *  layer label when the answer auto-creates a map layer. */
   prompt?: string | null;
+  /** Pre-built layer payload returned by the chat tool router. */
+  layer?: ChatResponse["layer"];
 }
 
 interface Props {
@@ -31,6 +33,9 @@ interface Props {
   /** Optional callback — fires when the user clicks "Add to map" on a
    *  message with geo rows. The parent creates a layer on the main map. */
   onAddPointsToMap?: (label: string, points: ChatPoint[]) => void;
+  /** Callback for a pre-built layer payload returned by the chat tool
+   *  router (OSM fetch / Mapbox isochrone / H3 aggregate). */
+  onAddPrebuiltLayer?: (layer: NonNullable<ChatResponse["layer"]>) => void;
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -40,7 +45,7 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 export default function ChatPanel({
-  storymapId, networkId, suggestions, layerNames, onAddPointsToMap,
+  storymapId, networkId, suggestions, layerNames, onAddPointsToMap, onAddPrebuiltLayer,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -68,10 +73,13 @@ export default function ChatPanel({
 
   // Auto-add: every assistant message with geo rows becomes a real map layer.
   // This is THE prompt-based-GIS interaction — chat drives the map.
+  // Messages that came with a pre-built `layer` (from the chat tool router)
+  // are skipped here — the layer was already pushed in the send() handler.
   useEffect(() => {
     if (!onAddPointsToMap) return;
     messages.forEach((m, i) => {
       if (m.role !== "assistant" || !m.rows || m.rows.length === 0) return;
+      if (m.layer) return;
       if (autoAddedRef.current.has(i)) return;
       const pts = extractPoints(m.rows);
       if (pts.length === 0) return;
@@ -103,8 +111,12 @@ export default function ChatPanel({
           provider: r.provider,
           error: r.error,
           prompt: trimmed,
+          layer: r.layer,
         },
       ]);
+      if (r.layer && onAddPrebuiltLayer) {
+        onAddPrebuiltLayer(r.layer);
+      }
     } catch (e) {
       setMessages((m) => [
         ...m,

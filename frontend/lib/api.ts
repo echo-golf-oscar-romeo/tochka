@@ -30,6 +30,16 @@ export interface ChatResponse {
   error: string | null;
   provider: string | null;
   history: { role: string; content: string }[];
+  /** Set when the chat tool router (OSM-fetch / Mapbox isochrone /
+   *  H3 aggregate) produced a pre-built layer. Frontend should add it
+   *  straight to the main map. */
+  layer?: {
+    id: string;
+    kind: "geojson" | "raster" | "vector" | "hex";
+    data?: GeoJSON.FeatureCollection;
+    paint?: Record<string, unknown>;
+    label?: string;
+  } | null;
 }
 
 export interface BeautifyStyle {
