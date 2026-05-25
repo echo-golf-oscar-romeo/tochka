@@ -126,12 +126,24 @@ export function rewriteMapboxUrl(url: string, token: string, resourceType?: stri
 
 /** Factory for a MapLibre `transformRequest` that rewrites Mapbox URIs.
  *  Returns null when no token is configured (caller can pass `undefined`
- *  straight through to MapLibre — non-Mapbox basemaps don't need this). */
+ *  straight through to MapLibre — non-Mapbox basemaps don't need this).
+ *  In development, every rewrite is logged so a blank-canvas issue can be
+ *  diagnosed from the browser console. */
 export function makeMapboxTransformRequest(token: string | null) {
   if (!token) return undefined;
+  const debug = process.env.NODE_ENV !== "production";
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.info("[mapbox] transformRequest active. token tail=…%s", token.slice(-6));
+  }
   return (url: string, resourceType?: string) => {
     if (url.startsWith("mapbox://")) {
-      return { url: rewriteMapboxUrl(url, token, resourceType) };
+      const rewritten = rewriteMapboxUrl(url, token, resourceType);
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.info("[mapbox] %s  →  %s", url, rewritten);
+      }
+      return { url: rewritten };
     }
     return { url };
   };
