@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import ChatPanel from "./ChatPanel";
 import Header from "./Header";
 import MapCanvas, { type MapCanvasHandle } from "./MapCanvas";
+import MethodologyPopover, { type Plan } from "./MethodologyPopover";
 import UploadDialog from "./UploadDialog";
 import WorkspacePanel, { type Workflow } from "./WorkspacePanel";
 import { analyzeStream, beautifyOnce, fetchStorymap, type UploadResponse } from "@/lib/api";
@@ -39,6 +40,12 @@ export default function MapWorkspace() {
   const [beautifyLog, setBeautifyLog] = useState<BeautifyLog[]>([]);
   const [storymapId, setStorymapId] = useState<string | null>(null);
 
+  // Methodology popover state: filled in by plan_narrative / tool_* events.
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [currentTool, setCurrentTool] = useState<string | null>(null);
+  const [completedTools, setCompletedTools] = useState<Set<string>>(new Set());
+  const [planDone, setPlanDone] = useState(false);
+
   // ----- Upload -----
   const handleUploaded = useCallback((net: UploadResponse) => {
     setNetwork(net);
@@ -60,6 +67,11 @@ export default function MapWorkspace() {
     setBusy(true);
     setEvents([]);
     setStorymapId(null);
+    // Reset methodology tracker so the popover shows the new run from scratch.
+    setPlan(null);
+    setCurrentTool(null);
+    setCompletedTools(new Set());
+    setPlanDone(false);
     // Keep the user-network layer visible; clear analysis layers.
     setLayers((prev) => prev.filter((l) => l.id === "user-network"));
     const abort = new AbortController();
@@ -85,6 +97,32 @@ export default function MapWorkspace() {
           if (ev.kind === "storymap_ready") {
             const sid = ev.payload?.storymap_id as string | undefined;
             if (sid) setStorymapId(sid);
+            setPlanDone(true);
+          }
+          if (ev.kind === "plan_narrative") {
+            const text = String(ev.payload?.text ?? "");
+            const archetypes = (ev.payload?.archetypes as string[] | undefined) ?? [];
+            const tool_sequence = (ev.payload?.tool_sequence as string[] | undefined) ?? [];
+            setPlan({ text, archetypes, tool_sequence });
+          }
+          if (ev.kind === "tool_call") {
+            const tool = ev.payload?.tool as string | undefined;
+            if (tool) setCurrentTool(tool);
+          }
+          if (ev.kind === "tool_result") {
+            const tool = ev.payload?.tool as string | undefined;
+            if (tool) {
+              setCompletedTools((prev) => {
+                if (prev.has(tool)) return prev;
+                const next = new Set(prev);
+                next.add(tool);
+                return next;
+              });
+            }
+          }
+          if (ev.kind === "done") {
+            setPlanDone(true);
+            setCurrentTool(null);
           }
         },
         abort.signal,
@@ -96,6 +134,8 @@ export default function MapWorkspace() {
     } finally {
       setBusy(false);
       setActiveWorkflow(null);
+      setPlanDone(true);
+      setCurrentTool(null);
     }
   }, [network, busy]);
 
@@ -261,6 +301,14 @@ export default function MapWorkspace() {
             layers={layers}
             visibility={layerVisibility}
             autoFit
+          />
+
+          <MethodologyPopover
+            plan={plan}
+            currentTool={currentTool}
+            completedTools={completedTools}
+            done={planDone}
+            onDismiss={() => setPlan(null)}
           />
 
           {/* Empty state — Aino-style display type, paper grain */}
