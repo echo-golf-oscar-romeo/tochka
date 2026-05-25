@@ -2,8 +2,10 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ChatPanel from "./ChatPanel";
 import Header from "./Header";
 import MapCanvas, { type MapCanvasHandle } from "./MapCanvas";
+import MethodologyPopover, { type Plan } from "./MethodologyPopover";
 import UploadDialog from "./UploadDialog";
 import WorkspacePanel, { type Workflow } from "./WorkspacePanel";
 import { analyzeStream, beautifyOnce, fetchStorymap, type UploadResponse } from "@/lib/api";
@@ -38,6 +40,12 @@ export default function MapWorkspace() {
   const [beautifyLog, setBeautifyLog] = useState<BeautifyLog[]>([]);
   const [storymapId, setStorymapId] = useState<string | null>(null);
 
+  // Methodology popover state: filled in by plan_narrative / tool_* events.
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [currentTool, setCurrentTool] = useState<string | null>(null);
+  const [completedTools, setCompletedTools] = useState<Set<string>>(new Set());
+  const [planDone, setPlanDone] = useState(false);
+
   // ----- Upload -----
   const handleUploaded = useCallback((net: UploadResponse) => {
     setNetwork(net);
@@ -59,6 +67,11 @@ export default function MapWorkspace() {
     setBusy(true);
     setEvents([]);
     setStorymapId(null);
+    // Reset methodology tracker so the popover shows the new run from scratch.
+    setPlan(null);
+    setCurrentTool(null);
+    setCompletedTools(new Set());
+    setPlanDone(false);
     // Keep the user-network layer visible; clear analysis layers.
     setLayers((prev) => prev.filter((l) => l.id === "user-network"));
     const abort = new AbortController();
@@ -84,6 +97,32 @@ export default function MapWorkspace() {
           if (ev.kind === "storymap_ready") {
             const sid = ev.payload?.storymap_id as string | undefined;
             if (sid) setStorymapId(sid);
+            setPlanDone(true);
+          }
+          if (ev.kind === "plan_narrative") {
+            const text = String(ev.payload?.text ?? "");
+            const archetypes = (ev.payload?.archetypes as string[] | undefined) ?? [];
+            const tool_sequence = (ev.payload?.tool_sequence as string[] | undefined) ?? [];
+            setPlan({ text, archetypes, tool_sequence });
+          }
+          if (ev.kind === "tool_call") {
+            const tool = ev.payload?.tool as string | undefined;
+            if (tool) setCurrentTool(tool);
+          }
+          if (ev.kind === "tool_result") {
+            const tool = ev.payload?.tool as string | undefined;
+            if (tool) {
+              setCompletedTools((prev) => {
+                if (prev.has(tool)) return prev;
+                const next = new Set(prev);
+                next.add(tool);
+                return next;
+              });
+            }
+          }
+          if (ev.kind === "done") {
+            setPlanDone(true);
+            setCurrentTool(null);
           }
         },
         abort.signal,
@@ -95,6 +134,8 @@ export default function MapWorkspace() {
     } finally {
       setBusy(false);
       setActiveWorkflow(null);
+      setPlanDone(true);
+      setCurrentTool(null);
     }
   }, [network, busy]);
 
@@ -223,14 +264,51 @@ export default function MapWorkspace() {
         status={headerStatus}
         detail={lastEventLine ?? undefined}
         busy={busy || beautifying}
+        activeWorkflow={activeWorkflow}
+        onRunWorkflow={handleWorkflow}
+        workflowsDisabled={!network || busy}
       />
       <main className="flex-1 min-h-0 flex">
+        {/* Left: chat (primary, bigger) */}
+        <aside className="w-[28rem] shrink-0 border-r border-border bg-canvas flex flex-col h-full overflow-hidden">
+          <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-border">
+            <div className="text-[10px] uppercase tracking-wider text-muted">Ask the data</div>
+            <div className="text-[10px] text-subtle">
+              {network ? "Spatial SQL · DuckDB" : "Upload first"}
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            {network ? (
+              <ChatPanel
+                storymapId={storymapId ?? undefined}
+                networkId={network.id}
+                suggestions={chatSuggestions}
+                layerNames={layerNames}
+                onAddPointsToMap={handleAddPointsToMap}
+              />
+            ) : (
+              <div className="px-4 py-4 text-xs text-muted">
+                Drop a CSV to begin. You&apos;ll be able to ask spatial questions immediately — no need to run a workflow first.
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Center: map */}
         <div className="relative flex-1 min-w-0 no-logo">
           <MapCanvas
             ref={mapHandleRef}
             layers={layers}
             visibility={layerVisibility}
             autoFit
+          />
+
+          <MethodologyPopover
+            plan={plan}
+            currentTool={currentTool}
+            completedTools={completedTools}
+            done={planDone}
+            onDismiss={() => setPlan(null)}
           />
 
           {/* Empty state — Aino-style display type, paper grain */}
@@ -284,13 +362,12 @@ export default function MapWorkspace() {
           )}
         </div>
 
+        {/* Right: layers + outputs */}
         <WorkspacePanel
           networkId={network?.id ?? null}
           networkSummary={networkSummary}
           onUpload={() => setShowUpload(true)}
-          activeWorkflow={activeWorkflow}
           busy={busy}
-          onRunWorkflow={handleWorkflow}
           layers={layers}
           layerVisibility={layerVisibility}
           onToggleLayer={handleToggleLayer}
@@ -300,10 +377,6 @@ export default function MapWorkspace() {
           beautifying={beautifying}
           onBeautify={handleBeautify}
           beautifyNotice={beautifyNotice}
-          storymapIdForChat={storymapId}
-          chatSuggestions={chatSuggestions}
-          layerNames={layerNames}
-          onAddPointsToMap={handleAddPointsToMap}
         />
       </main>
 

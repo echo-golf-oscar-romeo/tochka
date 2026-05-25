@@ -52,10 +52,9 @@ const config: Config = {
         good:  "#0b1020",
       },
       fontFamily: {
-        sans:    ['Inter', 'system-ui', 'sans-serif'],
-        display: ['Instrument Serif', 'Georgia', 'serif'],
-        serif:   ['Inter', 'system-ui', 'sans-serif'],
-        mono:    ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        sans:  ['Inter', 'system-ui', 'sans-serif'],
+        serif: ['Inter', 'system-ui', 'sans-serif'],
+        mono:  ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       fontSize: {
         'xs':   ['0.75rem',   { lineHeight: '1rem' }],

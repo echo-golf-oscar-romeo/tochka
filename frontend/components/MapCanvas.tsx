@@ -7,9 +7,7 @@ import type { Layer as StoryLayer } from "@/lib/storymap";
 
 export interface MapCanvasHandle {
   map: () => MlMap | null;
-  /** Capture the current visible map as a PNG data URI (for vision agents). */
   screenshot: () => string | null;
-  /** Apply MapLibre paint property updates to existing layers. */
   applyPaintUpdates: (updates: { layer_id: string; paint: Record<string, unknown> }[]) => void;
 }
 
@@ -18,17 +16,9 @@ interface Props {
   initialCenter?: [number, number];
   initialZoom?: number;
   styleUrl?: string;
-  /** Auto-fit the view to the union of all geojson layers when they arrive. */
   autoFit?: boolean;
-  /** Per-layer visibility flags. Missing entry = visible. */
   visibility?: Record<string, boolean>;
 }
-
-const FALLBACK_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {},
-  layers: [{ id: "bg", type: "background", paint: { "background-color": "#f6f4ef" } }],
-};
 
 const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
   { layers, initialCenter = [114.165, 22.33], initialZoom = 11, styleUrl, autoFit = true, visibility },
@@ -40,14 +30,13 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
   const knownLayersRef = useRef<Set<string>>(new Set());
   const layersRef = useRef<StoryLayer[]>(layers);
   layersRef.current = layers;
+  const popupRef = useRef<maplibregl.Popup | null>(null);
 
   useImperativeHandle(ref, () => ({
     map: () => mapRef.current,
     screenshot: () => {
       const m = mapRef.current;
       if (!m) return null;
-      // preserveDrawingBuffer would be cleaner but adds GPU overhead always;
-      // we force a synchronous redraw first so the canvas is current.
       try {
         m.triggerRepaint();
         return m.getCanvas().toDataURL("image/png");
@@ -86,44 +75,72 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     });
     mapRef.current = map;
 
-    // One-shot fallback if the basemap style fetch itself fails.
-    // We listen for *one* error during initial style load and swap to a
-    // blank canvas, then re-apply layers exactly once. Without the
-    // one-shot guard, the previous version recursed into a styledata loop:
-    // each addSource fires `styledata`, which triggered another reapply,
-    // which fired more styledata — and the map appeared to "stop loading"
-    // shortly after the first layer was added.
-    let fallbackApplied = false;
+    // Built-in MapLibre controls — Aino references show these standard.
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: true }), "top-right");
+    map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 110 }), "bottom-right");
+
+    // Errors are logged only — we never auto-swap the style anymore. The
+    // earlier auto-swap to FALLBACK_STYLE fired on transient tile 404s and
+    // nuked the basemap mid-session. With Carto Positron as the default
+    // (which doesn't 404), this isn't needed.
     map.on("error", (e) => {
-      if (fallbackApplied) return;
-      const looksLikeStyleFailure = !map.isStyleLoaded() || (e?.error as Error | undefined)?.message?.includes("style");
-      if (!looksLikeStyleFailure) return;
-      fallbackApplied = true;
-      try {
-        map.setStyle(FALLBACK_STYLE);
-        map.once("load", () => {
-          loadedRef.current = true;
-          knownLayersRef.current.clear();
-          for (const layer of layersRef.current) {
-            addOrReplaceLayer(map, layer, knownLayersRef.current);
-          }
-        });
-      } catch {
-        /* ignore */
-      }
+      // eslint-disable-next-line no-console
+      console.warn("MapLibre error:", (e?.error as Error | undefined)?.message ?? e);
     });
 
     map.on("load", () => {
       loadedRef.current = true;
       knownLayersRef.current.clear();
       for (const layer of layersRef.current) {
-        addOrReplaceLayer(map, layer, knownLayersRef.current);
+        try {
+          addOrReplaceLayer(map, layer, knownLayersRef.current);
+        } catch (err) {
+          console.warn("addOrReplaceLayer failed for", layer.id, err);
+        }
       }
       if (autoFit) fitToLayers(map, layersRef.current);
     });
 
+    // Single delegated click handler so any added point layer (user network,
+    // chat-N, future custom layers) gets a popup with its feature properties.
+    map.on("click", (e) => {
+      const point = e.point;
+      const allPointLayers = knownLayersRef.current
+        ? Array.from(knownLayersRef.current).filter((id) => {
+            try {
+              return map.getLayer(id) && (map.getLayer(id) as { type: string }).type === "circle";
+            } catch { return false; }
+          })
+        : [];
+      if (allPointLayers.length === 0) return;
+      const features = map.queryRenderedFeatures(point, { layers: allPointLayers });
+      if (!features.length) return;
+      const f = features[0];
+      const props = (f.properties ?? {}) as Record<string, unknown>;
+      const html = renderPopupHtml(props);
+      if (!html) return;
+      if (f.geometry.type !== "Point") return;
+      const coords = f.geometry.coordinates as [number, number];
+      if (popupRef.current) popupRef.current.remove();
+      popupRef.current = new maplibregl.Popup({ closeButton: true, offset: 10, className: "tochka-popup" })
+        .setLngLat(coords)
+        .setHTML(html)
+        .addTo(map);
+    });
+    // Pointer cursor on point hover for affordance.
+    map.on("mousemove", (e) => {
+      const allPointLayers = Array.from(knownLayersRef.current).filter((id) => {
+        try { return map.getLayer(id) && (map.getLayer(id) as { type: string }).type === "circle"; }
+        catch { return false; }
+      });
+      if (!allPointLayers.length) return;
+      const hits = map.queryRenderedFeatures(e.point, { layers: allPointLayers });
+      map.getCanvas().style.cursor = hits.length ? "pointer" : "";
+    });
+
     return () => {
       loadedRef.current = false;
+      if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; }
       map.remove();
       mapRef.current = null;
     };
@@ -136,11 +153,19 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     if (!map || !loadedRef.current) return;
     const incoming = new Set(layers.map((l) => l.id));
     for (const layer of layers) {
-      addOrReplaceLayer(map, layer, knownLayersRef.current);
+      try {
+        addOrReplaceLayer(map, layer, knownLayersRef.current);
+      } catch (err) {
+        console.warn("addOrReplaceLayer failed for", layer.id, err);
+      }
     }
     for (const known of Array.from(knownLayersRef.current)) {
       if (!incoming.has(known) && !known.endsWith("-outline")) {
-        removeLayer(map, known, knownLayersRef.current);
+        try {
+          removeLayer(map, known, knownLayersRef.current);
+        } catch (err) {
+          console.warn("removeLayer failed for", known, err);
+        }
       }
     }
     applyVisibility(map, layers, visibility ?? {});
@@ -153,10 +178,29 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
 export default MapCanvas;
 
 
+function renderPopupHtml(props: Record<string, unknown>): string | null {
+  const name = props.name ?? props.brand ?? props.id;
+  if (!name) return null;
+  const rows: string[] = [];
+  rows.push(`<div class="text-sm font-semibold text-ink">${escapeHtml(String(name))}</div>`);
+  for (const key of ["brand", "type", "district", "capacity", "actual_volume", "distance_m", "score"]) {
+    const v = props[key];
+    if (v === null || v === undefined || v === "") continue;
+    rows.push(`<div class="text-[11px] text-muted"><span class="text-ink/70">${key}:</span> ${escapeHtml(String(v))}</div>`);
+  }
+  return `<div class="space-y-0.5">${rows.join("")}</div>`;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c] ?? c));
+}
+
+
 function addOrReplaceLayer(map: MlMap, layer: StoryLayer, known: Set<string>) {
   if (layer.kind !== "geojson" || !layer.data) return;
   const data = layer.data as GeoJSON.FeatureCollection;
-  // If source exists, just update the data; otherwise add fresh.
   const existing = map.getSource(layer.id) as maplibregl.GeoJSONSource | undefined;
   if (existing) {
     existing.setData(data);
@@ -174,7 +218,6 @@ function addOrReplaceLayer(map: MlMap, layer: StoryLayer, known: Set<string>) {
     paint: layer.paint ?? {},
   } as Parameters<MlMap["addLayer"]>[0]);
 
-  // For polygons, also add an outline line layer for a touch more definition.
   if (isPolygon && (layer.paint as Record<string, unknown>)?.["line-color"]) {
     const outlineId = `${layer.id}-outline`;
     if (!map.getLayer(outlineId)) {
@@ -201,11 +244,7 @@ function applyVisibility(map: MlMap, layers: StoryLayer[], visibility: Record<st
     const value = visible ? "visible" : "none";
     for (const id of [layer.id, `${layer.id}-outline`]) {
       if (map.getLayer(id)) {
-        try {
-          map.setLayoutProperty(id, "visibility", value);
-        } catch {
-          /* ignore */
-        }
+        try { map.setLayoutProperty(id, "visibility", value); } catch { /* ignore */ }
       }
     }
   }
@@ -247,14 +286,6 @@ function fitToLayers(map: MlMap, layers: StoryLayer[]) {
 
 
 function forEachCoord(geom: GeoJSON.Geometry, fn: (lng: number, lat: number) => void) {
-  const visit = (c: GeoJSON.Position | GeoJSON.Position[] | GeoJSON.Position[][] | GeoJSON.Position[][][]): void => {
-    if (typeof c[0] === "number") {
-      const pos = c as GeoJSON.Position;
-      fn(pos[0], pos[1]);
-      return;
-    }
-    (c as GeoJSON.Position[]).forEach(visit as never);
-  };
   switch (geom.type) {
     case "Point": fn(geom.coordinates[0], geom.coordinates[1]); break;
     case "MultiPoint":

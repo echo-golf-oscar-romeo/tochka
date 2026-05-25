@@ -13,6 +13,9 @@ interface Message {
   columns?: string[];
   provider?: string | null;
   error?: string | null;
+  /** The user question that produced this assistant answer — used as the
+   *  layer label when the answer auto-creates a map layer. */
+  prompt?: string | null;
 }
 
 interface Props {
@@ -44,6 +47,9 @@ export default function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Tracks which assistant-message indices have already been pushed to the
+  // main map, so we only auto-add each answer once.
+  const autoAddedRef = useRef<Set<number>>(new Set());
 
   const handleId = storymapId ?? networkId ?? null;
 
@@ -57,7 +63,23 @@ export default function ChatPanel({
   useEffect(() => {
     setMessages([]);
     setInput("");
+    autoAddedRef.current.clear();
   }, [networkId]);
+
+  // Auto-add: every assistant message with geo rows becomes a real map layer.
+  // This is THE prompt-based-GIS interaction — chat drives the map.
+  useEffect(() => {
+    if (!onAddPointsToMap) return;
+    messages.forEach((m, i) => {
+      if (m.role !== "assistant" || !m.rows || m.rows.length === 0) return;
+      if (autoAddedRef.current.has(i)) return;
+      const pts = extractPoints(m.rows);
+      if (pts.length === 0) return;
+      autoAddedRef.current.add(i);
+      const label = (m.prompt ?? "").trim().slice(0, 60) || `chat #${i + 1}`;
+      onAddPointsToMap(label, pts);
+    });
+  }, [messages, onAddPointsToMap]);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -80,6 +102,7 @@ export default function ChatPanel({
           columns: r.columns,
           provider: r.provider,
           error: r.error,
+          prompt: trimmed,
         },
       ]);
     } catch (e) {
@@ -159,12 +182,7 @@ export default function ChatPanel({
           </div>
         )}
         {messages.map((m, i) => (
-          <MessageBubble
-            key={i}
-            m={m}
-            onAddPointsToMap={onAddPointsToMap}
-            messageIndex={i}
-          />
+          <MessageBubble key={i} m={m} />
         ))}
         {busy && (
           <div className="text-muted italic flex items-center gap-2 text-xs">
@@ -235,11 +253,9 @@ export default function ChatPanel({
 
 interface MessageBubbleProps {
   m: Message;
-  onAddPointsToMap?: (label: string, points: ChatPoint[]) => void;
-  messageIndex: number;
 }
 
-function MessageBubble({ m, onAddPointsToMap, messageIndex }: MessageBubbleProps) {
+function MessageBubble({ m }: MessageBubbleProps) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
@@ -261,14 +277,10 @@ function MessageBubble({ m, onAddPointsToMap, messageIndex }: MessageBubbleProps
         <p className="whitespace-pre-wrap">{m.content}</p>
         <div className="mt-1 flex items-center gap-2 text-[10px] text-subtle">
           {m.provider && <span>via {m.provider}</span>}
-          {geoPoints.length > 0 && onAddPointsToMap && (
-            <button
-              type="button"
-              onClick={() => onAddPointsToMap(`chat #${messageIndex + 1}`, geoPoints)}
-              className="text-accent-600 hover:text-accent-700 underline-offset-2 hover:underline"
-            >
-              + add {geoPoints.length} {geoPoints.length === 1 ? "point" : "points"} to map
-            </button>
+          {geoPoints.length > 0 && (
+            <span className="text-accent-600">
+              ↳ added {geoPoints.length} {geoPoints.length === 1 ? "point" : "points"} as a map layer
+            </span>
           )}
         </div>
       </div>
