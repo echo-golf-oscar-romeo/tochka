@@ -1,11 +1,13 @@
 import type { Config } from "tailwindcss";
 
-// Tochka palette — Aino-leaning.
+// tochka palette — round 5
 //
-// One vivid blue is the single accent ("4657fa" is what Aino itself uses).
-// Complementary highlight (warm amber) is reserved for emphasis / Beautify.
-// Background is pure white, ink is near-black with a hint of slate.
-// All other colors are neutral grays in the slate family.
+// One vivid purple is the single accent (#4F35F8). Secondary warning red
+// (#FB3640). Off-black ink (#0A0903), near-white canvas (#FDFDFD).
+// An 8-colour layer palette is exposed under `theme.colors.layer.*` so
+// new analysis or chat layers can rotate through a saturated rainbow
+// without re-using the primary purple (which is reserved for the brand
+// + the user's own network).
 
 const config: Config = {
   content: [
@@ -17,39 +19,52 @@ const config: Config = {
     extend: {
       colors: {
         // Surface
-        canvas:  "#ffffff",
-        surface: "#fafbfc",
-        border:  "#e7eaee",
-        rule:    "#f3f4f7",
+        canvas:  "#FDFDFD",
+        surface: "#f6f6f5",
+        border:  "#e7e6e2",
+        rule:    "#f0efeb",
         // Text
-        ink:     "#0b1020",   // near-black with a hint of slate-blue
-        muted:   "#5c6470",
-        subtle:  "#9097a3",
-        // Single accent ramp — Aino electric blue
+        ink:     "#0A0903",       // off-black
+        muted:   "#5c5b56",
+        subtle:  "#9a9890",
+        // Single accent ramp — tochka electric purple
         accent: {
-          50:  "#eef0ff",
-          100: "#dbe0ff",
-          200: "#b9c2ff",
-          300: "#8b97ff",
-          400: "#6772fa",
-          500: "#4657fa",   // primary
-          600: "#3344e0",
-          700: "#2734b8",
-          800: "#1f298f",
-          900: "#171f63",
+          50:  "#efecff",
+          100: "#dcd6ff",
+          200: "#beb2ff",
+          300: "#9986ff",
+          400: "#7560fb",
+          500: "#4F35F8",         // primary
+          600: "#3f24e0",
+          700: "#321bb8",
+          800: "#27158f",
+          900: "#1c0f66",
         },
-        // Complementary warm — used sparingly for highlight states
+        // Secondary — warning red for emphasis / cannibalisation / anomalies
         highlight: {
-          50:  "#fff5e8",
-          100: "#ffe6c4",
-          500: "#f59e0b",
-          600: "#d97706",
+          50:  "#ffeaeb",
+          100: "#ffcccf",
+          500: "#FB3640",
+          600: "#d92129",
+        },
+        // 8-colour rotating palette for non-primary data layers (chat
+        // results, per-archetype outputs, classified categories). Frontend
+        // code picks by `LAYER_PALETTE[i % 8]`.
+        layer: {
+          0: "#FAD037",           // yellow
+          1: "#FB3640",           // red (also = highlight.500)
+          2: "#FA37B2",           // pink
+          3: "#C637FA",           // purple-magenta
+          4: "#37B2FA",           // sky blue
+          5: "#37FADD",           // mint
+          6: "#37FA7E",           // green
+          7: "#FA8237",           // orange
         },
         // Aliases so older code continues to compile
-        paper: "#ffffff",
-        warm:  "#4657fa",
-        warn:  "#3344e0",
-        good:  "#0b1020",
+        paper: "#FDFDFD",
+        warm:  "#4F35F8",
+        warn:  "#FB3640",
+        good:  "#0A0903",
       },
       fontFamily: {
         sans:  ['Inter', 'system-ui', 'sans-serif'],
@@ -74,11 +89,14 @@ const config: Config = {
         tightish: "-0.01em",
       },
       boxShadow: {
-        // softer than Tailwind defaults, more "paper"
-        'panel': '0 1px 0 rgba(0,0,0,0.03), 0 0 0 1px rgba(11,16,32,0.06)',
-        'soft':  '0 8px 24px -8px rgba(11,16,32,0.10), 0 2px 6px -2px rgba(11,16,32,0.06)',
-        'card':  '0 1px 2px rgba(11,16,32,0.04), 0 1px 0 rgba(11,16,32,0.03), 0 0 0 1px rgba(11,16,32,0.04)',
-        'pop':   '0 20px 50px -12px rgba(11,16,32,0.18), 0 6px 12px -6px rgba(11,16,32,0.08)',
+        'panel': '0 1px 0 rgba(10,9,3,0.03), 0 0 0 1px rgba(10,9,3,0.06)',
+        'soft':  '0 8px 24px -8px rgba(10,9,3,0.10), 0 2px 6px -2px rgba(10,9,3,0.06)',
+        'card':  '0 1px 2px rgba(10,9,3,0.04), 0 1px 0 rgba(10,9,3,0.03), 0 0 0 1px rgba(10,9,3,0.05)',
+        'pop':   '0 20px 50px -12px rgba(10,9,3,0.18), 0 6px 12px -6px rgba(10,9,3,0.08)',
+        'glass': '0 8px 28px -10px rgba(10,9,3,0.22), 0 1px 0 rgba(255,255,255,0.6) inset, 0 0 0 1px rgba(10,9,3,0.06)',
+      },
+      backdropBlur: {
+        'glass': '14px',
       },
     },
   },

@@ -8,7 +8,7 @@ import MapCanvas, { type MapCanvasHandle } from "./MapCanvas";
 import MethodologyPopover, { type Plan } from "./MethodologyPopover";
 import UploadDialog from "./UploadDialog";
 import WorkspacePanel, { type Workflow } from "./WorkspacePanel";
-import { analyzeStream, beautifyOnce, fetchStorymap, type UploadResponse } from "@/lib/api";
+import { analyzeStream, beautifyOnce, fetchStorymap, uploadCsv, type UploadResponse } from "@/lib/api";
 import type { Layer as StoryLayer } from "@/lib/storymap";
 
 type AgentEvent = { kind: string; payload: Record<string, unknown> };
@@ -24,6 +24,13 @@ const ARCHETYPE_BY_WORKFLOW: Record<Workflow, ("diagnose" | "expand" | "rational
   expand: ["expand"],
   rationalise: ["rationalise"],
 };
+
+// 8-colour rotating palette for chat-driven layers. Mirrors the
+// theme.colors.layer.0..7 entries in tailwind.config.ts.
+const LAYER_PALETTE = [
+  "#FAD037", "#FB3640", "#FA37B2", "#C637FA",
+  "#37B2FA", "#37FADD", "#37FA7E", "#FA8237",
+];
 
 export default function MapWorkspace() {
   const router = useRouter();
@@ -207,16 +214,20 @@ export default function MapWorkspace() {
       geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
       properties: { id: p.id, name: p.label ?? "" },
     }));
+    // Rotate through the 8-colour layer palette so each chat-driven layer
+    // is visually distinct from the user network and from prior chat layers.
+    const colour = LAYER_PALETTE[(chatLayerCountRef.current - 1) % LAYER_PALETTE.length];
     const layer: StoryLayer = {
       id: layerId,
       kind: "geojson",
       data: { type: "FeatureCollection", features },
       paint: {
-        "circle-color": "#d97706",       // warm complement — distinguishes chat layers
+        "circle-color": colour,
         "circle-radius": 6,
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#FDFDFD",
+        "circle-stroke-width": 2,
       },
+      label,
     };
     setLayers((prev) => [...prev, layer]);
     setLayerVisibility((prev) => ({ ...prev, [layerId]: true }));
@@ -311,31 +322,19 @@ export default function MapWorkspace() {
             onDismiss={() => setPlan(null)}
           />
 
-          {/* Empty state — Aino-style display type, paper grain */}
+          {/* Empty state — bright liquid-glass card; CSV can be dropped directly */}
           {!network && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="pointer-events-auto max-w-lg text-center surface-grain rounded-2xl shadow-soft px-10 py-9 border border-border">
-                <div className="display text-5xl text-ink mb-2 leading-none">Tochka</div>
-                <p className="text-sm text-muted mb-6 leading-relaxed max-w-sm mx-auto">
-                  Spatial intelligence for Hong Kong. Drop a CSV of locations, run a workflow, ask the data anything spatial.
-                </p>
-                <div className="flex items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowUpload(true)}
-                    className="rounded-full accent-gradient text-canvas px-5 py-2 text-sm font-medium shadow-soft hover:shadow-pop transition"
-                  >
-                    Upload network CSV
-                  </button>
-                  <a
-                    href="/about"
-                    className="rounded-full border border-border text-ink hover:border-accent-300 px-4 py-2 text-sm transition"
-                  >
-                    What is this?
-                  </a>
-                </div>
-              </div>
-            </div>
+            <LandingCard
+              onPickFile={() => setShowUpload(true)}
+              onFileDropped={async (file) => {
+                try {
+                  const net = await uploadCsv(file);
+                  handleUploaded(net);
+                } catch (e) {
+                  console.error("upload failed:", e);
+                }
+              }}
+            />
           )}
 
           {/* Progress strip */}
@@ -389,6 +388,69 @@ export default function MapWorkspace() {
 
 // ---------- helpers ----------
 
+interface LandingCardProps {
+  onPickFile: () => void;
+  onFileDropped: (file: File) => void;
+}
+
+function LandingCard({ onPickFile, onFileDropped }: LandingCardProps) {
+  const [dragging, setDragging] = useState(false);
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <div
+        className={`pointer-events-auto max-w-lg text-center liquid-glass-strong rounded-2xl px-10 py-9 transition ${
+          dragging ? "ring-2 ring-accent-500" : ""
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) onFileDropped(f);
+        }}
+      >
+        <div className="text-5xl text-ink mb-2 leading-none font-semibold tracking-tightish lowercase">
+          tochka
+        </div>
+        <p className="text-sm text-ink/80 mb-6 leading-relaxed max-w-sm mx-auto">
+          Spatial intelligence for Hong Kong. Drop a CSV of locations here — or click below — to start. Then run a workflow or ask the data anything spatial.
+        </p>
+        <div className="flex items-center justify-center gap-2">
+          <label className="cursor-pointer rounded-full accent-gradient text-canvas px-5 py-2 text-sm font-medium shadow-soft hover:shadow-pop transition">
+            Upload network CSV
+            <input
+              type="file"
+              accept=".csv,.tsv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onFileDropped(f);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={onPickFile}
+            className="rounded-full border border-border text-ink hover:border-accent-300 px-4 py-2 text-sm transition bg-canvas/60"
+          >
+            Options…
+          </button>
+          <a
+            href="/about"
+            className="rounded-full border border-border text-ink hover:border-accent-300 px-4 py-2 text-sm transition bg-canvas/60"
+          >
+            What is this?
+          </a>
+        </div>
+        <p className="mt-4 text-[11px] text-muted">
+          {dragging ? "release to upload" : "drag a .csv anywhere on this card"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function buildUserNetworkLayer(net: UploadResponse): StoryLayer {
   const features = net.locations
     .filter((loc) => loc.lat !== null && loc.lng !== null)
@@ -402,10 +464,10 @@ function buildUserNetworkLayer(net: UploadResponse): StoryLayer {
     kind: "geojson",
     data: { type: "FeatureCollection", features },
     paint: {
-      "circle-color": "#2f55e6",
+      "circle-color": "#4F35F8",
       "circle-radius": 7,
-      "circle-stroke-color": "#ffffff",
-      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#FDFDFD",
+      "circle-stroke-width": 2,
     },
   };
 }

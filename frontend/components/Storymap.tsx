@@ -85,7 +85,7 @@ export default function Storymap({ data }: { data: StorymapResult }) {
           );
         })}
         <footer className="px-8 py-12 text-sm text-muted">
-          Powered by Qwen · grounded in CSDI · Tochka
+          Powered by Qwen · grounded in CSDI · tochka
         </footer>
       </div>
     </div>

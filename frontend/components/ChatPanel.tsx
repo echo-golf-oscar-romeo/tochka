@@ -76,7 +76,7 @@ export default function ChatPanel({
       const pts = extractPoints(m.rows);
       if (pts.length === 0) return;
       autoAddedRef.current.add(i);
-      const label = (m.prompt ?? "").trim().slice(0, 60) || `chat #${i + 1}`;
+      const label = labelFromPrompt(m.prompt) || `chat #${i + 1}`;
       onAddPointsToMap(label, pts);
     });
   }, [messages, onAddPointsToMap]);
@@ -349,6 +349,24 @@ function pickNumber(row: Record<string, unknown>, keys: readonly string[]): numb
     }
   }
   return null;
+}
+
+/** Turn a user question into a short, legible layer label.
+ *  "Which 10 competitor banks are closest to Central?" -> "10 competitor banks closest to Central"
+ *  "Show all branches with their nearest competitor distance." -> "All branches with their nearest competitor distance" */
+function labelFromPrompt(prompt: string | null | undefined): string {
+  if (!prompt) return "";
+  let s = prompt.trim().replace(/[?.!]+$/g, "");
+  // Strip common question/command leaders.
+  s = s.replace(
+    /^(?:please\s+)?(?:can you|could you|would you|i want to|i'd like to|let's|let me|tell me|show me|show|find|list|get|display|plot|map|give me|fetch|return|highlight|which|what(?:'s| is| are)?|where(?:'s| is| are)?|how many|how much|are there|is there)\s+/i,
+    "",
+  );
+  s = s.trim();
+  // Sentence-case (capitalise first letter only) and truncate.
+  if (s.length > 0) s = s[0].toUpperCase() + s.slice(1);
+  if (s.length > 60) s = s.slice(0, 57).trimEnd() + "…";
+  return s;
 }
 
 function extractPoints(rows: Record<string, unknown>[]): ChatPoint[] {

@@ -71,7 +71,9 @@ async def llm_plan(
     archetypes: list[str],
     tool_names: list[str],
 ) -> str | None:
-    """A one-or-two-sentence narration of the plan for the chosen task.
+    """Multi-paragraph methodology — what the analysis will produce, why this
+    sequence, and what each step contributes. Shown verbatim in the
+    Methodology pop-over while tools run.
 
     Falls back to None if the LLM is unavailable; the orchestrator emits a
     hand-rolled string in that case so the user still sees reasoning.
@@ -79,25 +81,34 @@ async def llm_plan(
     llm = get_llm()
     if not llm.has_key:
         return None
+    summary = _network_summary(network)
     prompt = (
-        f"The user wants to run the following analytical archetype(s) on a Hong Kong "
-        f"network of {len(network.locations)} locations: {', '.join(archetypes)}.\n\n"
-        f"The deterministic tools you can sequence are: {', '.join(tool_names)}.\n\n"
-        f"In ONE sentence (max 2), explain what the analysis will produce, leading "
-        f"with the most consequential output. Speak directly to the user (\"I'll …\"). "
-        f"No bullet points, no preamble. Plain text only."
+        f"You are designing a Hong Kong location-intelligence methodology for "
+        f"the archetype(s): {', '.join(archetypes)}.\n\n"
+        f"Network summary: {summary}.\n\n"
+        f"Available deterministic tools (in roughly the order I'll call them):\n"
+        f"  {', '.join(tool_names)}\n\n"
+        f"Write the methodology as a short, executive-readable plan:\n"
+        f"  • Lead with ONE sentence stating the headline output (what the user "
+        f"will see at the end).\n"
+        f"  • Then a SECOND sentence giving your REASONING — why this sequence of "
+        f"tools is the right way to answer the question, and what the chief risk is.\n"
+        f"  • Then 3–5 numbered steps, each tying a tool to the concrete intermediate "
+        f"output it produces (e.g. '1. isochrone_walk → 10-min walking polygons '\n"
+        f"    'around each branch, the catchment we'll measure demand inside.').\n\n"
+        f"Speak in first person (\"I'll …\"). No markdown headings. Plain text only."
     )
     text = await llm.chat(
         messages=[
             {"role": "system", "content": SYSTEM_ORCHESTRATOR},
             {"role": "user", "content": prompt},
         ],
-        temperature=0.4,
-        max_tokens=120,
+        temperature=0.45,
+        max_tokens=600,
     )
     if not text:
         return None
-    return " ".join(text.split())   # collapse newlines
+    return text.strip()
 
 
 async def llm_narrate(
