@@ -71,11 +71,21 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     // map renders as a blank white canvas. mapboxToken() returns null when
     // no token is set, in which case we pass `undefined` and MapLibre
     // handles non-Mapbox styles (like Carto Positron) directly.
-    const transformRequest = makeMapboxTransformRequest(mapboxToken());
+    const token = mapboxToken();
+    const transformRequest = makeMapboxTransformRequest(token);
+    const resolvedStyleUrl = styleUrl ?? csdiStyleUrl();
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.info(
+        "[MapCanvas] init style=%s tokenInBundle=%s",
+        resolvedStyleUrl,
+        token ? `pk…${token.slice(-6)}` : "(none)",
+      );
+    }
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: (styleUrl ?? csdiStyleUrl()) as unknown as StyleSpecification | string,
+      style: resolvedStyleUrl as unknown as StyleSpecification | string,
       center: initialCenter,
       zoom: initialZoom,
       attributionControl: { compact: true },
@@ -93,8 +103,14 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     // nuked the basemap mid-session. With Carto Positron as the default
     // (which doesn't 404), this isn't needed.
     map.on("error", (e) => {
+      const err = e?.error as (Error & { url?: string; status?: number }) | undefined;
       // eslint-disable-next-line no-console
-      console.warn("MapLibre error:", (e?.error as Error | undefined)?.message ?? e);
+      console.warn(
+        "[MapLibre] %s%s%s",
+        err?.message ?? String(e),
+        err?.status ? ` [HTTP ${err.status}]` : "",
+        err?.url ? ` ← ${err.url}` : "",
+      );
     });
 
     map.on("load", () => {
