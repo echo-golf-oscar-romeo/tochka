@@ -74,35 +74,49 @@ export function rewriteMapboxUrl(url: string, token: string, resourceType?: stri
   let httpUrl: string;
 
   if (tail.startsWith("styles/")) {
-    // sprites for a style come back as `mapbox://sprites/<u>/<s>` in style
-    // JSON, but MapLibre also sometimes asks for the style itself.
+    // `mapbox://styles/<u>/<s>` → /styles/v1/<u>/<s>
     const path = tail.slice("styles/".length);
     httpUrl = `https://api.mapbox.com/styles/v1/${path}`;
   } else if (tail.startsWith("sprites/")) {
-    const path = tail.slice("sprites/".length);
-    // MapLibre passes the resourceType so we know whether to ask for
-    // /sprite.json or /sprite.png; we strip any existing extension and let
-    // MapLibre's request flow re-append it via the URL params it sends.
-    httpUrl = `https://api.mapbox.com/styles/v1/${path}/sprite`;
+    // MapLibre's request manager appends format+extension to the sprite URL
+    // BEFORE calling transformRequest, so we receive shapes like:
+    //   mapbox://sprites/<u>/<s>.json
+    //   mapbox://sprites/<u>/<s>@2x.png
+    //   mapbox://sprites/<u>/<s>.png
+    // We have to insert "/sprite" between the style id and the extension —
+    // not at the end — otherwise we end up with the extension stuck inside
+    // the style id and the request 404s.
+    const m = tail.match(/^sprites\/([^/]+)\/([^.@]+)(.*)$/);
+    if (m) {
+      const [, user, styleId, suffix] = m;
+      httpUrl = `https://api.mapbox.com/styles/v1/${user}/${styleId}/sprite${suffix}`;
+    } else {
+      // Bare sprite URL (no extension yet).
+      const path = tail.slice("sprites/".length);
+      httpUrl = `https://api.mapbox.com/styles/v1/${path}/sprite`;
+    }
   } else if (tail.startsWith("fonts/")) {
+    // mapbox://fonts/<u>/{stack}/{range}.pbf → /fonts/v1/<u>/{stack}/{range}.pbf
+    // The fontstack + range + extension are all already in the path; a
+    // plain prefix swap is correct.
     const path = tail.slice("fonts/".length);
     httpUrl = `https://api.mapbox.com/fonts/v1/${path}`;
-  } else if (resourceType === "Source" || resourceType === "Tile") {
-    // Vector source: `mapbox://mapbox.mapbox-streets-v8,mapbox.terrain-v2`
-    // Tile pattern includes {z}/{x}/{y}; MapLibre fetches the source JSON
-    // first (resourceType "Source"), then individual tiles (resourceType
-    // "Tile"). The latter already include the {z}/{x}/{y} path tail.
-    const slashIdx = tail.indexOf("/");
-    if (slashIdx === -1) {
-      // Source request — return the source JSON descriptor.
-      httpUrl = `https://api.mapbox.com/v4/${tail}.json?secure`;
-    } else {
-      // Tile request: `<tileset>/<z>/<x>/<y>.<ext>` already encoded.
-      httpUrl = `https://api.mapbox.com/v4/${tail}`;
-    }
   } else {
-    // Unknown shape — best-effort: drop the prefix and serve it under /v4.
-    httpUrl = `https://api.mapbox.com/v4/${tail}`;
+    // Vector source or tile under /v4.
+    //   Source TileJSON: `mapbox://mapbox.mapbox-streets-v8`
+    //                  → /v4/mapbox.mapbox-streets-v8.json?secure
+    //   Combined:        `mapbox://mapbox.streets-v8,mapbox.terrain-v2`
+    //                  → /v4/mapbox.streets-v8,mapbox.terrain-v2.json?secure
+    //   Tile:            `mapbox://<tileset>/<z>/<x>/<y>.<ext>`
+    //                  → /v4/<tileset>/<z>/<x>/<y>.<ext>
+    // We detect tile shape by the embedded {z}/{x}/{y} segment so we don't
+    // rely on resourceType (MapLibre doesn't always set it for our hook).
+    const looksLikeTile = /\/\d+\/\d+\/\d+\./.test(tail);
+    if (looksLikeTile) {
+      httpUrl = `https://api.mapbox.com/v4/${tail}`;
+    } else {
+      httpUrl = `https://api.mapbox.com/v4/${tail}.json?secure`;
+    }
   }
 
   const sep = httpUrl.includes("?") ? "&" : "?";
