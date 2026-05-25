@@ -46,6 +46,16 @@ _FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 _SQL_TAG = re.compile(r"<sql>([\s\S]*?)</sql>", re.IGNORECASE)
+# Fallback: SQL wrapped in markdown fences ```sql … ``` (DeepSeek's
+# preferred output shape when it ignores the <sql> instruction).
+_SQL_FENCE = re.compile(r"```(?:sql|SQL)?\s*([\s\S]*?)```")
+# Last-resort: a bare SELECT statement found anywhere in the text. We
+# extract from the first WITH or SELECT keyword to the next semicolon
+# (or end of string). Used only when the structured forms don't match.
+_SQL_BARE = re.compile(
+    r"\b((?:WITH|SELECT)\b[\s\S]*?)(?:;|\Z)",
+    re.IGNORECASE,
+)
 _MAX_ROWS = 100
 _TIMEOUT_MS = 10_000
 
@@ -55,11 +65,24 @@ class GeoSQLError(Exception):
 
 
 def extract_sql(text: str) -> str:
-    """Pull the first <sql>…</sql> block out of the LLM response."""
+    """Pull SQL out of the LLM response. Tries three shapes in order:
+
+      1. The canonical `<sql>…</sql>` block (what the prompt asks for).
+      2. A markdown fence ` ```sql … ``` ` (DeepSeek's default shape).
+      3. A bare SELECT/WITH … sequence anywhere in the response (last resort).
+
+    Returns the trimmed SQL. Raises GeoSQLError when nothing matches.
+    """
     m = _SQL_TAG.search(text)
-    if not m:
-        raise GeoSQLError("LLM did not return a <sql>…</sql> block.")
-    return m.group(1).strip().rstrip(";").strip()
+    if m:
+        return m.group(1).strip().rstrip(";").strip()
+    m = _SQL_FENCE.search(text)
+    if m:
+        return m.group(1).strip().rstrip(";").strip()
+    m = _SQL_BARE.search(text)
+    if m:
+        return m.group(1).strip().rstrip(";").strip()
+    raise GeoSQLError("LLM did not return a SQL query in any recognised shape.")
 
 
 def validate_sql(sql: str) -> None:
@@ -142,12 +165,25 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
     system = _skill()
     if storymap_summary:
         system += f"\n\n## Storymap context\n{storymap_summary}\n"
+    # Append a sharp final reminder — some providers (notably DeepSeek)
+    # bury the format instruction under the long skill prompt and answer
+    # in natural language. Repeating the rule right before the user
+    # message reliably gets them back on format.
+    system += (
+        "\n\n## FINAL REMINDER\n"
+        "Respond with EXACTLY one read-only SQL SELECT wrapped in `<sql>…</sql>` tags. "
+        "Do not include any prose, markdown, explanations, or comments outside the tags. "
+        "If the question is out of scope, return the standard 'Not answerable' SELECT inside `<sql>…</sql>` tags as described above."
+    )
     messages = (
         [{"role": "system", "content": system}]
         + history[-10:]  # keep last 5 turns
         + [{"role": "user", "content": user_message}]
     )
-    raw = await llm.chat(messages=messages, temperature=0.1, max_tokens=500)
+    # Bumped from 500 → 1500: complex spatial CTEs run long, and DeepSeek
+    # sometimes prepends a sentence of "thinking" before the tag — both
+    # caused the response to truncate before `</sql>` was emitted.
+    raw = await llm.chat(messages=messages, temperature=0.1, max_tokens=1500)
     if not raw:
         return {"answer": "The LLM didn't respond. Try again.",
                 "sql": None, "rows": [], "columns": [], "error": "llm_no_response",

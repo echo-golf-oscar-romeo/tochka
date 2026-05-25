@@ -63,7 +63,7 @@ non-existent table.
 | column         | type    | notes |
 |----------------|---------|-------|
 | id             | VARCHAR | uuid assigned at upload |
-| name           | VARCHAR | branch / outlet name |
+| name           | VARCHAR | branch / outlet name — **always match with `ILIKE '%…%'`**, never `=`. Users type "hku" but the row may be "HKU", "HKU Branch", "Hong Kong University", etc. |
 | lat            | DOUBLE  |  |
 | lng            | DOUBLE  |  |
 | capacity       | DOUBLE  | NULL when not provided |
@@ -122,15 +122,18 @@ Your queries should include `LIMIT 50` or use aggregation when appropriate.
 ## Common query patterns
 
 ### 1. Competitors within X metres of one of the user's branches
+Always use `ILIKE '%…%'` for the branch-name match — the user types a
+loose phrase ("hku", "sham shui po") but the row may be longer.
+
 ```sql
 SELECT o.brand, o.name, o.type,
        ROUND(ST_Distance_Spheroid(ST_Point(o.lat,o.lng), ST_Point(u.lat,u.lng)), 1) AS distance_m
 FROM osm_pois o, _user_locations u
-WHERE u.name = 'Sham Shui Po Branch'
+WHERE u.name ILIKE '%hku%'
   AND o.type = 'bank'
-  AND ST_Distance_Spheroid(ST_Point(o.lat,o.lng), ST_Point(u.lat,u.lng)) <= 500
+  AND ST_Distance_Spheroid(ST_Point(o.lat,o.lng), ST_Point(u.lat,u.lng)) <= 2000
 ORDER BY distance_m
-LIMIT 20;
+LIMIT 10;
 ```
 
 ### 2. Per-branch competitor count, ranked
@@ -196,15 +199,22 @@ DuckDB-spatial's `ST_Buffer` works in the geometry's CRS units. For WGS84
 points, convert to a metric projection (EPSG:3857) first, buffer, then
 convert back — that gives a buffer in metres.
 
+**CRITICAL: pass `always_xy=true` to BOTH `ST_Transform` calls.** Without
+it, DuckDB-spatial uses PROJ's official axis order (lat-then-lng for
+EPSG:4326), but `ST_Point(u.lng, u.lat)` feeds it lng-then-lat. The result
+is silently empty geometry — no error, just `"coordinates": []` in the
+output GeoJSON. Always include the fourth argument.
+
 ```sql
 SELECT u.id, u.name,
        ST_AsGeoJSON(
          ST_Transform(
            ST_Buffer(
-             ST_Transform(ST_Point(u.lng, u.lat), 'EPSG:4326', 'EPSG:3857'),
+             ST_Transform(ST_Point(u.lng, u.lat),
+                          'EPSG:4326', 'EPSG:3857', true),
              500   -- metres
            ),
-           'EPSG:3857', 'EPSG:4326'
+           'EPSG:3857', 'EPSG:4326', true
          )
        ) AS buffer_geojson,
        u.lat, u.lng

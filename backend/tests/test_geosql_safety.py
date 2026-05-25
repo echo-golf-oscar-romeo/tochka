@@ -35,9 +35,22 @@ def test_extract_sql_multiline_and_strips_trailing_semicolon():
     assert extract_sql(raw) == "SELECT name\n  FROM osm_pois\n  LIMIT 5"
 
 
-def test_extract_sql_missing_tag_raises():
+def test_extract_sql_falls_back_to_markdown_fence():
+    # DeepSeek tends to wrap SQL in fenced code blocks instead of tags.
+    raw = "Here you go:\n```sql\nSELECT name FROM osm_pois LIMIT 5\n```"
+    assert extract_sql(raw) == "SELECT name FROM osm_pois LIMIT 5"
+
+
+def test_extract_sql_falls_back_to_bare_select():
+    # Last resort: pick up a bare SELECT … from prose. Still validated
+    # downstream by validate_sql().
+    raw = "Here is some SQL: SELECT 1"
+    assert extract_sql(raw) == "SELECT 1"
+
+
+def test_extract_sql_raises_when_no_sql_at_all():
     with pytest.raises(GeoSQLError):
-        extract_sql("Here is some SQL: SELECT 1")
+        extract_sql("I cannot answer — out of scope, sorry.")
 
 
 # --- validate_sql ---
