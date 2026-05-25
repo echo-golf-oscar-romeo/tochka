@@ -91,6 +91,16 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
       attributionControl: { compact: true },
       preserveDrawingBuffer: true, // needed for screenshot capture
       transformRequest,
+      // MapLibre's style validator is stricter than the Mapbox style spec.
+      // Mapbox styles include extensions (e.g. nested `name` fields inside
+      // imports/iconsets) that MapLibre flags as "unknown property", and a
+      // SINGLE validation error makes Style._load() return early — sources,
+      // sprites, and glyphs never fetch, the map renders blank, and the
+      // transformRequest hook is never called. Disabling validation here
+      // lets MapLibre load Mapbox styles end-to-end. Our chosen styles
+      // (Mapbox or Carto Positron) are both known-good; we don't lose
+      // anything safety-wise.
+      validateStyle: false,
     });
     mapRef.current = map;
 
