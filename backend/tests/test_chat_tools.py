@@ -20,6 +20,13 @@ from app.orchestrator.chat_tools import classify
     ("get supermarkets near central", "supermarkets"),
     ("fetch museums", "museums"),
     ("download all MTR stations across the territory", "mtr"),
+    # Extra verbs the user actually types — must also be classified.
+    ("add all the schools in hong kong", "schools"),
+    ("plot every pharmacy in hk", "pharmacies"),
+    ("drop hotels onto the map", "hotels"),
+    ("include all parks in the region", "parks"),
+    ("import every supermarket", "supermarkets"),
+    ("put atms on the map", "atms"),
 ])
 def test_classify_osm_fetch(prompt: str, expected_category: str) -> None:
     intent = classify(prompt)

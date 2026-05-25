@@ -73,11 +73,11 @@ for canonical, spec in OSM_CATEGORIES.items():
         _ALIAS_TO_CATEGORY[a.lower()] = canonical
 
 _OSM_FETCH_RE = re.compile(
-    r"(?:find|fetch|load|download|show|get|list|map)\s+"
-    r"(?:all\s+|every\s+)?"
+    r"(?:find|fetch|load|download|show|get|list|map|add|plot|drop|include|import|put|place|render|display|pull)\s+"
+    r"(?:all\s+|every\s+|some\s+)?"
     r"(?:the\s+)?"
     r"(?P<cat>[a-zA-Z][\w\- ]+?)"
-    r"(?:\s+(?:in|near|around|across|throughout|of|on)\s+(?:hong\s*kong|hk|the\s+region|the\s+map|the\s+territory))?"
+    r"(?:\s+(?:in|near|around|across|throughout|of|on|to|onto|into)\s+(?:hong\s*kong|hk|the\s+region|the\s+map|the\s+territory|the\s+database))?"
     r"\b",
     re.IGNORECASE,
 )

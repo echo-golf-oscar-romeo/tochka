@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chatAsk, chatNetwork, type ChatResponse } from "@/lib/api";
-import ChatMap, { type ChatPoint } from "./ChatMap";
+import { type ChatPoint } from "./ChatMap";
 import ChatChart from "./ChatChart";
 
 interface Message {
@@ -127,17 +127,6 @@ export default function ChatPanel({
     }
   }
 
-  // Latest assistant answer with geo rows → drives the inline chat map.
-  const mapPoints = useMemo<ChatPoint[]>(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== "assistant" || !m.rows || m.rows.length === 0) continue;
-      const pts = extractPoints(m.rows);
-      if (pts.length > 0) return pts;
-    }
-    return [];
-  }, [messages]);
-
   const sug = suggestions && suggestions.length > 0 ? suggestions : DEFAULT_SUGGESTIONS;
 
   // Slash menu — current layer names as completions.
@@ -158,20 +147,6 @@ export default function ChatPanel({
 
   return (
     <div className="flex flex-col h-full bg-canvas">
-      {mapPoints.length > 0 && (
-        <div className="shrink-0 border-b border-border">
-          <div className="px-3 pt-2 pb-1 flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wider text-muted">
-              {mapPoints.length} on the chat map
-            </span>
-            <span className="text-[10px] text-subtle">geo answer</span>
-          </div>
-          <div className="h-48 w-full">
-            <ChatMap points={mapPoints} />
-          </div>
-        </div>
-      )}
-
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 text-sm">
         {messages.length === 0 && (
           <div className="space-y-3">
