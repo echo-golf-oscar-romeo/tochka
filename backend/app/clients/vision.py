@@ -68,6 +68,9 @@ class VisionClient:
             self.model = s.qwen_vision_model
 
         self._client = httpx.AsyncClient(timeout=60.0)
+        # Holds the most recent failure reason for the orchestrator to
+        # surface back to the user, instead of a generic "returned nothing".
+        self.last_error: str | None = None
 
     @property
     def has_key(self) -> bool:
@@ -86,7 +89,9 @@ class VisionClient:
         max_tokens: int = 1200,
     ) -> str | None:
         """Send a single image + prompt; return the assistant text or None."""
+        self.last_error = None
         if not self.api_key:
+            self.last_error = f"no API key configured for VISION_PROVIDER={self.provider}"
             log.info("Vision (%s): no API key set.", self.provider)
             return None
 
@@ -115,27 +120,59 @@ class VisionClient:
             # OpenRouter uses these headers for attribution/discoverability.
             # Both optional; included as good citizens.
             headers["HTTP-Referer"] = "https://github.com/echo-golf-oscar-romeo/tochka"
-            headers["X-Title"] = "Tochka — location intelligence"
+            headers["X-Title"] = "tochka — location intelligence"
         try:
             r = await self._client.post(
                 f"{self.base_url}/chat/completions",
                 json=body,
                 headers=headers,
             )
-            r.raise_for_status()
-            data = r.json()
-            content = data["choices"][0]["message"]["content"]
-            if isinstance(content, list):
-                # Some providers return content as a list of parts.
-                texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-                content = "\n".join(t for t in texts if t)
-            return (content or "").strip() or None
         except httpx.HTTPError as e:
-            log.warning("Vision (%s) HTTP error: %s", self.provider, e)
+            self.last_error = f"network error: {e}"
+            log.warning("Vision (%s/%s) network error: %s", self.provider, self.model, e)
             return None
-        except (KeyError, IndexError, ValueError) as e:
-            log.warning("Vision (%s) malformed response: %s", self.provider, e)
+
+        # Surface the actual response body on non-2xx so we can tell apart
+        # "model unavailable", "invalid key", "rate limit", etc. instead of
+        # the silent "returned nothing" the user sees in the UI.
+        if r.status_code >= 400:
+            body_preview = r.text[:500] if r.text else "(empty body)"
+            self.last_error = f"HTTP {r.status_code}: {body_preview[:200]}"
+            log.warning(
+                "Vision (%s/%s) HTTP %s: %s",
+                self.provider, self.model, r.status_code, body_preview,
+            )
             return None
+
+        try:
+            data = r.json()
+        except ValueError as e:
+            self.last_error = f"non-JSON response: {r.text[:120]}"
+            log.warning("Vision (%s/%s) non-JSON response: %s; preview: %s",
+                        self.provider, self.model, e, r.text[:300])
+            return None
+
+        # OpenRouter sometimes returns a top-level {"error": {...}} with HTTP 200.
+        if isinstance(data, dict) and data.get("error"):
+            err = data["error"]
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            self.last_error = f"provider error: {msg}"
+            log.warning("Vision (%s/%s) provider error: %s", self.provider, self.model, msg)
+            return None
+
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            self.last_error = f"malformed response shape: {e}"
+            log.warning("Vision (%s/%s) malformed response: %s; raw: %s",
+                        self.provider, self.model, e, str(data)[:300])
+            return None
+
+        if isinstance(content, list):
+            # Some providers return content as a list of parts.
+            texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            content = "\n".join(t for t in texts if t)
+        return (content or "").strip() or None
 
 
 _singleton: VisionClient | None = None

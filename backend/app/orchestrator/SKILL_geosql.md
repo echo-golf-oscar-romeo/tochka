@@ -163,6 +163,31 @@ ORDER BY distance_m
 LIMIT 50;
 ```
 
+### 6. Buffer geometry around each branch (e.g. "500m buffer around each point")
+DuckDB-spatial's `ST_Buffer` works in the geometry's CRS units. For WGS84
+points, convert to a metric projection (EPSG:3857) first, buffer, then
+convert back — that gives a buffer in metres.
+
+```sql
+SELECT u.id, u.name,
+       ST_AsGeoJSON(
+         ST_Transform(
+           ST_Buffer(
+             ST_Transform(ST_Point(u.lng, u.lat), 'EPSG:4326', 'EPSG:3857'),
+             500   -- metres
+           ),
+           'EPSG:3857', 'EPSG:4326'
+         )
+       ) AS buffer_geojson,
+       u.lat, u.lng
+FROM _user_locations u
+LIMIT 50;
+```
+
+The frontend will render any column ending in `_geojson` as a layer
+geometry automatically. Always include `lat,lng` so the result is also
+listable on the chat map.
+
 ---
 
 ## Workflow

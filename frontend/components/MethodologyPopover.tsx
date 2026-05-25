@@ -42,7 +42,7 @@ export default function MethodologyPopover({
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="absolute left-1/2 top-3 -translate-x-1/2 z-20 rounded-full bg-canvas/95 backdrop-blur border border-border shadow-card px-3 py-1.5 text-xs text-ink hover:border-accent-400 transition"
+        className="absolute left-1/2 top-3 -translate-x-1/2 z-20 rounded-full liquid-glass px-3 py-1.5 text-xs text-ink hover:border-accent-400 transition"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent-500 align-middle mr-2" />
         Methodology · {completedCount}/{total}
@@ -51,7 +51,7 @@ export default function MethodologyPopover({
   }
 
   return (
-    <div className="absolute left-1/2 top-3 -translate-x-1/2 z-20 w-[34rem] max-w-[92%] rounded-lg bg-canvas/97 backdrop-blur border border-border shadow-pop">
+    <div className="absolute left-1/2 top-3 -translate-x-1/2 z-20 w-[34rem] max-w-[92%] rounded-lg liquid-glass-strong overflow-hidden">
       <div className="flex items-start justify-between px-4 pt-3 pb-2 border-b border-border">
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-wider text-muted">
@@ -92,7 +92,7 @@ export default function MethodologyPopover({
         </div>
       </div>
 
-      <div className="px-4 py-3 text-[13px] text-ink leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+      <div className="px-4 py-3 text-[13px] text-ink leading-relaxed max-h-72 overflow-y-auto whitespace-pre-wrap">
         {plan.text}
       </div>
 

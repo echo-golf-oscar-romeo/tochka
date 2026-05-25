@@ -195,9 +195,9 @@ async def run_beautify_turn(
     )
     if not raw:
         out = _fallback_suggestions(current_styles)
+        reason = getattr(vision, "last_error", None) or "no response body"
         out["notes"] = (
-            f"Vision call to '{vision.provider}' ({vision.model}) returned nothing — "
-            "check API key, model availability, or rate limit."
+            f"Vision call to '{vision.provider}' ({vision.model}) failed: {reason}"
         )
         out["error"] = "vision_call_failed"
         return out

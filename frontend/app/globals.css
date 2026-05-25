@@ -66,5 +66,34 @@
 .no-logo .maplibregl-ctrl-logo { display: none !important; }
 
 .accent-gradient {
-  background: linear-gradient(135deg, #5b6cff 0%, #4657fa 50%, #2d3eea 100%);
+  background: linear-gradient(135deg, #7560fb 0%, #4F35F8 50%, #321bb8 100%);
+}
+
+/* Liquid-glass surface — used for floating panels (methodology pop-over,
+ * landing card, header on top of the map). Combines a translucent canvas
+ * fill with backdrop-blur + saturation boost + a hairline highlight.
+ * Falls back gracefully to a solid fill if backdrop-filter is unsupported. */
+.liquid-glass {
+  background: rgba(253, 253, 253, 0.62);
+  backdrop-filter: blur(14px) saturate(170%);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  border: 1px solid rgba(10, 9, 3, 0.07);
+  box-shadow:
+    0 8px 28px -10px rgba(10, 9, 3, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.6) inset;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .liquid-glass { background: rgba(253, 253, 253, 0.94); }
+}
+
+/* Stronger variant — for the landing card that sits over the map and
+ * needs to be readable against any basemap tile. */
+.liquid-glass-strong {
+  background: rgba(253, 253, 253, 0.88);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(10, 9, 3, 0.08);
+  box-shadow:
+    0 20px 50px -12px rgba(10, 9, 3, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.7) inset;
 }

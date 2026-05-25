@@ -11,7 +11,7 @@ export default function AboutPage() {
           ← Back to workspace
         </Link>
 
-        <h1 className="display text-5xl mt-8 mb-3">Tochka</h1>
+        <h1 className="display text-5xl mt-8 mb-3 lowercase">tochka</h1>
         <p className="text-lg text-muted leading-relaxed mb-8">
           Agent-driven location intelligence for Hong Kong banking, retail, and
           social-services networks. Upload a CSV of locations, pick a workflow,

@@ -23,15 +23,14 @@ export default function Header({
   status, detail, busy, activeWorkflow, onRunWorkflow, workflowsDisabled,
 }: Props) {
   return (
-    <header className="h-12 shrink-0 flex items-center border-b border-border bg-canvas/95 backdrop-blur px-4 z-20">
-      {/* Brand: a single dot, the wordmark, and a small status */}
-      <div className="flex items-center gap-3 shrink-0">
+    <header className="h-12 shrink-0 flex items-center border-b border-border liquid-glass px-4 z-20">
+      {/* Brand: a single dot + the wordmark (lowercase) */}
+      <div className="flex items-center gap-2.5 shrink-0">
         <span
           aria-hidden
           className="inline-block h-2.5 w-2.5 rounded-full accent-gradient shadow-sm"
         />
-        <span className="text-sm font-semibold text-ink tracking-tightish">Tochka</span>
-        <span className="hidden sm:inline text-[11px] text-muted">— Location intelligence</span>
+        <span className="text-sm font-semibold text-ink tracking-tightish lowercase">tochka</span>
       </div>
 
       {/* Workflow buttons live in the header now */}
@@ -73,7 +72,7 @@ export default function Header({
         <Link
           href="/about"
           className="text-[11px] text-muted hover:text-ink rounded-full border border-border w-6 h-6 inline-flex items-center justify-center transition"
-          aria-label="About Tochka"
+          aria-label="About tochka"
           title="About"
         >
           ?

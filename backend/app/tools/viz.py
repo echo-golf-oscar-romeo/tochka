@@ -13,15 +13,37 @@ from app.models.analysis import AnalysisRequest
 from app.models.network import Network
 from app.models.storymap import Layer, MapLocation, StorymapResult, StorymapSection
 
-# Aino-inspired palette. Soft greys for basemap context, two strong accents for data.
+# tochka palette — round 5.
+# Primary purple is reserved for the user's own network. The 8-colour
+# layer ramp (LAYER_PALETTE) supplies distinct hues for derived layers.
+PRIMARY = "#4F35F8"
+SECONDARY = "#FB3640"
+INK = "#0A0903"
+PAPER = "#FDFDFD"
+
+# 8-colour layer ramp — index by layer type for visual diversity.
+LAYER_PALETTE = [
+    "#FAD037",  # 0 yellow
+    "#FB3640",  # 1 red
+    "#FA37B2",  # 2 pink
+    "#C637FA",  # 3 magenta
+    "#37B2FA",  # 4 sky blue
+    "#37FADD",  # 5 mint
+    "#37FA7E",  # 6 green
+    "#FA8237",  # 7 orange
+]
+
 PALETTE = {
-    "user_network": "#0f5ea8",     # deep blue — your locations
-    "competitor":    "#e07a5f",    # terracotta — competitors
-    "isochrone":     "#0f5ea8",    # match user network, low opacity
-    "hex_low":       "#f6f4ef",    # near-paper
-    "hex_high":      "#1a1a1a",    # near-black for density peaks
-    "anomaly_under": "#c44536",    # warning red
-    "anomaly_over":  "#3a7d44",    # validating green
+    "user_network": PRIMARY,
+    "competitor":   LAYER_PALETTE[7],   # orange — distinct from purple primary
+    "isochrone":    PRIMARY,            # match user network, transparent fill
+    "hex_low":      "#f6f4ef",
+    "hex_high":     INK,
+    "anomaly_under": SECONDARY,
+    "anomaly_over":  LAYER_PALETTE[6],  # green
+    "cannibalisation": SECONDARY,
+    "opportunity_low":  LAYER_PALETTE[0],  # yellow — low score
+    "opportunity_high": "#C637FA",          # magenta — high score
 }
 
 # Basemap style emitted into the storymap payload. Carto Positron is the
@@ -73,8 +95,8 @@ def build_user_network_layer(network: Network) -> Layer:
         paint={
             "circle-color": PALETTE["user_network"],
             "circle-radius": 7,
-            "circle-stroke-color": "#ffffff",
-            "circle-stroke-width": 1.5,
+            "circle-stroke-color": PAPER,
+            "circle-stroke-width": 2,
         },
     )
 
@@ -84,10 +106,10 @@ def build_isochrones_layer(isochrones: list[dict]) -> Layer:
         "isochrones", "geojson", _fc(isochrones),
         paint={
             "fill-color": PALETTE["isochrone"],
-            "fill-opacity": 0.13,
+            "fill-opacity": 0.30,           # ≈ 70 % transparent — polygon rule
             "line-color": PALETTE["isochrone"],
-            "line-width": 1,
-            "line-opacity": 0.6,
+            "line-width": 1.5,
+            "line-opacity": 0.7,
         },
     )
 
@@ -107,7 +129,9 @@ def build_competitors_layer(competitors: list[dict]) -> Layer:
         paint={
             "circle-color": PALETTE["competitor"],
             "circle-radius": 4,
-            "circle-opacity": 0.85,
+            "circle-opacity": 0.9,
+            "circle-stroke-color": PAPER,
+            "circle-stroke-width": 1.2,
         },
     )
 
@@ -117,7 +141,7 @@ def build_cannibalisation_layer(pairs: list[dict]) -> Layer:
     return make_layer(
         "cannibalisation", "geojson", _fc(pairs),
         paint={
-            "line-color": "#d97706",   # complementary highlight (warm amber)
+            "line-color": PALETTE["cannibalisation"],
             "line-width": 2.5,
             "line-opacity": 0.85,
         },
@@ -125,18 +149,18 @@ def build_cannibalisation_layer(pairs: list[dict]) -> Layer:
 
 
 def build_opportunity_layer(cells: list[dict]) -> Layer:
-    """Hex-grid cells coloured by uncovered-demand score."""
+    """Hex-grid cells coloured by uncovered-demand score (yellow → magenta)."""
     return make_layer(
         "opportunity", "geojson", _fc(cells),
         paint={
             "fill-color": [
                 "interpolate", ["linear"], ["get", "score"],
-                0.0, "#dbe0ff",
-                0.5, "#8b97ff",
-                1.0, "#1f298f",
+                0.0, PALETTE["opportunity_low"],   # yellow
+                0.5, "#FA37B2",                    # pink
+                1.0, PALETTE["opportunity_high"],  # magenta
             ],
-            "fill-opacity": 0.55,
-            "line-color": "#1f298f",
+            "fill-opacity": 0.30,                  # 70 % transparent — polygon rule
+            "line-color": PALETTE["opportunity_high"],
             "line-width": 0.5,
             "line-opacity": 0.4,
         },
@@ -160,9 +184,9 @@ def build_anomalies_layer(anomalies: list[dict], network: Network) -> Layer:
         paint={
             "circle-color": PALETTE["anomaly_under"],
             "circle-radius": 11,
-            "circle-stroke-color": "#ffffff",
-            "circle-stroke-width": 2,
-            "circle-opacity": 0.85,
+            "circle-stroke-color": PAPER,
+            "circle-stroke-width": 2.5,
+            "circle-opacity": 0.9,
         },
     )
 
@@ -264,7 +288,7 @@ async def compose_storymap(
         layers=[layer_user, layer_iso, layer_comp, layer_anom],
         sections=sections,
         summary=(
-            f"Tochka analysed {n_loc} locations using a {request.demand_model.value} demand model "
+            f"tochka analysed {n_loc} locations using a {request.demand_model.value} demand model "
             f"and the {', '.join(a.value for a in request.archetypes)} archetype(s)."
         ),
     )

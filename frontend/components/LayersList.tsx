@@ -19,10 +19,11 @@ const LAYER_LABELS: Record<string, string> = {
 };
 
 
-function deriveLabel(layerId: string): string {
-  if (LAYER_LABELS[layerId]) return LAYER_LABELS[layerId];
-  if (layerId.startsWith("chat-")) return `Chat result · ${layerId.slice(5)}`;
-  return layerId;
+function deriveLabel(layer: StoryLayer): string {
+  if (layer.label) return layer.label;
+  if (LAYER_LABELS[layer.id]) return LAYER_LABELS[layer.id];
+  if (layer.id.startsWith("chat-")) return `Chat result · ${layer.id.slice(5)}`;
+  return layer.id;
 }
 
 export default function LayersList({ layers, visibility, onToggle, onRemove }: Props) {
@@ -38,7 +39,7 @@ export default function LayersList({ layers, visibility, onToggle, onRemove }: P
       {layers.map((layer) => {
         const visible = visibility[layer.id] !== false;
         const count = featureCount(layer);
-        const label = deriveLabel(layer.id);
+        const label = deriveLabel(layer);
         const swatch = layerSwatch(layer);
         return (
           <li

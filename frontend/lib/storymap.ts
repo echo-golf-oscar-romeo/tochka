@@ -19,6 +19,10 @@ export interface Layer {
   data?: GeoJSON.FeatureCollection | null;
   source_url?: string | null;
   paint?: Record<string, unknown>;
+  /** Optional human-readable name used by the right-hand layers panel.
+   *  Set by client-side layer creation (chat → map). Layers from the
+   *  backend leave this undefined and fall back to id-keyed labels. */
+  label?: string | null;
 }
 
 export interface StorymapSection {
