@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ChatPanel from "./ChatPanel";
 import Header from "./Header";
 import MapCanvas, { type MapCanvasHandle } from "./MapCanvas";
 import UploadDialog from "./UploadDialog";
@@ -223,8 +224,37 @@ export default function MapWorkspace() {
         status={headerStatus}
         detail={lastEventLine ?? undefined}
         busy={busy || beautifying}
+        activeWorkflow={activeWorkflow}
+        onRunWorkflow={handleWorkflow}
+        workflowsDisabled={!network || busy}
       />
       <main className="flex-1 min-h-0 flex">
+        {/* Left: chat (primary, bigger) */}
+        <aside className="w-[28rem] shrink-0 border-r border-border bg-canvas flex flex-col h-full overflow-hidden">
+          <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-border">
+            <div className="text-[10px] uppercase tracking-wider text-muted">Ask the data</div>
+            <div className="text-[10px] text-subtle">
+              {network ? "Spatial SQL · DuckDB" : "Upload first"}
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            {network ? (
+              <ChatPanel
+                storymapId={storymapId ?? undefined}
+                networkId={network.id}
+                suggestions={chatSuggestions}
+                layerNames={layerNames}
+                onAddPointsToMap={handleAddPointsToMap}
+              />
+            ) : (
+              <div className="px-4 py-4 text-xs text-muted">
+                Drop a CSV to begin. You&apos;ll be able to ask spatial questions immediately — no need to run a workflow first.
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Center: map */}
         <div className="relative flex-1 min-w-0 no-logo">
           <MapCanvas
             ref={mapHandleRef}
@@ -284,13 +314,12 @@ export default function MapWorkspace() {
           )}
         </div>
 
+        {/* Right: layers + outputs */}
         <WorkspacePanel
           networkId={network?.id ?? null}
           networkSummary={networkSummary}
           onUpload={() => setShowUpload(true)}
-          activeWorkflow={activeWorkflow}
           busy={busy}
-          onRunWorkflow={handleWorkflow}
           layers={layers}
           layerVisibility={layerVisibility}
           onToggleLayer={handleToggleLayer}
@@ -300,10 +329,6 @@ export default function MapWorkspace() {
           beautifying={beautifying}
           onBeautify={handleBeautify}
           beautifyNotice={beautifyNotice}
-          storymapIdForChat={storymapId}
-          chatSuggestions={chatSuggestions}
-          layerNames={layerNames}
-          onAddPointsToMap={handleAddPointsToMap}
         />
       </main>
 

@@ -1,5 +1,5 @@
-/* @import MUST come before @tailwind directives per the CSS spec. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif&display=swap");
+/* @import must come before @tailwind directives per spec. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -20,20 +20,30 @@
     @apply tracking-tightish;
     font-weight: 600;
   }
-  .display {
-    font-family: 'Instrument Serif', Georgia, serif;
-    font-weight: 400;
-    letter-spacing: -0.02em;
-  }
-  /* MapLibre attribution */
+
+  /* MapLibre attribution + control buttons — subtle, Aino-style */
   .maplibregl-ctrl-attrib {
     @apply text-[10px] !text-muted;
     background: rgba(255,255,255,0.7) !important;
   }
   .maplibregl-canvas { outline: none; }
+  .maplibregl-ctrl-group {
+    @apply !border !border-border !shadow-card !rounded-md overflow-hidden;
+  }
+  .maplibregl-ctrl button {
+    @apply !w-7 !h-7;
+  }
+
+  /* Popup styling — clean white card */
+  .tochka-popup .maplibregl-popup-content {
+    @apply !rounded-md !shadow-pop !border !border-border !px-3 !py-2;
+  }
+  .tochka-popup .maplibregl-popup-tip {
+    @apply !border-t-canvas;
+  }
 }
 
-/* Storymap shell kept compatible with the legacy /story/[id] */
+/* Storymap shell kept compatible with /story/[id] */
 .storymap-shell {
   display: grid;
   grid-template-columns: 1fr;
@@ -54,15 +64,6 @@
 }
 
 .no-logo .maplibregl-ctrl-logo { display: none !important; }
-
-/* A subtle paper-like noise texture used on the empty-state card and
-   the header background so things don't read as flat-fill. */
-.surface-grain {
-  background-image:
-    radial-gradient(rgba(15,23,42,0.025) 1px, transparent 1px),
-    linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
-  background-size: 6px 6px, 100% 100%;
-}
 
 .accent-gradient {
   background: linear-gradient(135deg, #5b6cff 0%, #4657fa 50%, #2d3eea 100%);
