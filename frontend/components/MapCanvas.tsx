@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import maplibregl, { type Map as MlMap, type StyleSpecification } from "maplibre-gl";
-import { csdiStyleUrl } from "@/lib/mapStyle";
+import { csdiStyleUrl, makeMapboxTransformRequest, mapboxToken } from "@/lib/mapStyle";
 import type { Layer as StoryLayer } from "@/lib/storymap";
 
 export interface MapCanvasHandle {
@@ -65,6 +65,14 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
+    // When the basemap comes from Mapbox, the fetched style JSON embeds
+    // `mapbox://` URIs for vector sources, sprites, and glyphs. MapLibre
+    // can't resolve those natively — without a transformRequest hook the
+    // map renders as a blank white canvas. mapboxToken() returns null when
+    // no token is set, in which case we pass `undefined` and MapLibre
+    // handles non-Mapbox styles (like Carto Positron) directly.
+    const transformRequest = makeMapboxTransformRequest(mapboxToken());
+
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: (styleUrl ?? csdiStyleUrl()) as unknown as StyleSpecification | string,
@@ -72,6 +80,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
       zoom: initialZoom,
       attributionControl: { compact: true },
       preserveDrawingBuffer: true, // needed for screenshot capture
+      transformRequest,
     });
     mapRef.current = map;
 
