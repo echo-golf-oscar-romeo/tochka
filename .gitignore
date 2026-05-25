@@ -23,10 +23,15 @@ build/
 *.tsbuildinfo
 .npm/
 
-# Data — large or scraped, never commit
+# Data — large or scraped, never commit (per-folder allowlist below)
 data/*
 !data/.gitkeep
 !data/README.md
+# Kontur population parquet is small (~25 KB) and required for opportunity
+# scoring — commit it so the backend boots with real population hexes.
+!data/kontur/
+data/kontur/*
+!data/kontur/kontur_pop_hk.parquet
 # DuckDB databases anywhere in the tree
 *.duckdb
 *.duckdb.wal

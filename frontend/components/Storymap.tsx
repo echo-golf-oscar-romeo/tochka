@@ -21,7 +21,8 @@ import Opportunity from "./sections/Opportunity";
 import NextSteps from "./sections/NextSteps";
 import type { StorymapResult, StorymapSection } from "@/lib/storymap";
 
-const SECTION_COMPONENTS: Record<string, React.ComponentType<{ section: StorymapSection }>> = {
+interface SectionProps { section: StorymapSection; onFitToSection?: () => void }
+const SECTION_COMPONENTS: Record<string, React.ComponentType<SectionProps>> = {
   "network-glance": NetworkAtGlance,
   "who-you-reach": WhoYouReach,
   "whats-working": WhatsWorking,
@@ -66,10 +67,16 @@ export default function Storymap({ data }: { data: StorymapResult }) {
           initialZoom={data.sections[0]?.location.zoom ?? 11}
         />
       </div>
-      <div className="bg-paper">
-        <header className="px-8 pt-16 pb-8 border-b border-muted/20">
-          <h1 className="font-serif text-4xl mb-2">{data.summary?.split(".")[0] ?? "Your network"}</h1>
-          <p className="text-sm text-muted">{data.summary}</p>
+      <div className="bg-canvas">
+        <header className="px-8 pt-16 pb-10 border-b border-border">
+          <div className="flex items-center gap-2.5 mb-6">
+            <span aria-hidden className="inline-block h-2 w-2 rounded-full accent-gradient" />
+            <span className="text-[11px] uppercase tracking-wider text-muted">tochka · storymap</span>
+          </div>
+          <h1 className="text-4xl md:text-5xl font-semibold tracking-tightish text-ink mb-3 leading-[1.1]">
+            {data.summary?.split(".")[0] ?? "Your network"}
+          </h1>
+          <p className="text-[15px] text-ink/75 max-w-prose leading-relaxed">{data.summary}</p>
         </header>
         {data.sections.map((section, idx) => {
           const Comp = SECTION_COMPONENTS[section.id] ?? NetworkAtGlance;
@@ -80,7 +87,13 @@ export default function Storymap({ data }: { data: StorymapResult }) {
               data-idx={idx}
               data-active={activeIdx === idx}
             >
-              <Comp section={section} />
+              <Comp
+                section={section}
+                onFitToSection={() => {
+                  const map = mapHandle.current?.map();
+                  if (map) applyChapter(map, section);
+                }}
+              />
             </section>
           );
         })}

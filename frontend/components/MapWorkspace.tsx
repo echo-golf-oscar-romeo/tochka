@@ -236,6 +236,31 @@ export default function MapWorkspace() {
   }, []);
   const chatLayerLabelsRef = useRef<Record<string, string>>({});
 
+  // ----- Chat tool router → pre-built layer (OSM fetch / Mapbox isochrone / H3) -----
+  const handleAddPrebuiltLayer = useCallback((incoming: {
+    id: string;
+    kind: "geojson" | "raster" | "vector" | "hex";
+    data?: GeoJSON.FeatureCollection;
+    paint?: Record<string, unknown>;
+    label?: string;
+  }) => {
+    const layer: StoryLayer = {
+      id: incoming.id,
+      kind: incoming.kind,
+      data: incoming.data ?? null,
+      paint: incoming.paint ?? {},
+      label: incoming.label ?? incoming.id,
+    };
+    setLayers((prev) => {
+      const idx = prev.findIndex((l) => l.id === layer.id);
+      if (idx === -1) return [...prev, layer];
+      const copy = prev.slice();
+      copy[idx] = layer;
+      return copy;
+    });
+    setLayerVisibility((prev) => ({ ...prev, [layer.id]: true }));
+  }, []);
+
   // ----- Storymap -----
   const handleOpenStorymap = useCallback(async () => {
     if (!storymapId) return;
@@ -296,6 +321,7 @@ export default function MapWorkspace() {
                 suggestions={chatSuggestions}
                 layerNames={layerNames}
                 onAddPointsToMap={handleAddPointsToMap}
+                onAddPrebuiltLayer={handleAddPrebuiltLayer}
               />
             ) : (
               <div className="px-4 py-4 text-xs text-muted">

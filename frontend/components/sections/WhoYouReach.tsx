@@ -1,6 +1,8 @@
 import SectionPanel from "./_SectionPanel";
 import type { StorymapSection } from "@/lib/storymap";
 
-export default function WhoYouReach({ section }: { section: StorymapSection }) {
-  return <SectionPanel section={section} accent="accent" />;
+interface Props { section: StorymapSection; onFitToSection?: () => void }
+
+export default function WhoYouReach({ section, onFitToSection }: Props) {
+  return <SectionPanel section={section} accent="accent" onFitToSection={onFitToSection} />;
 }

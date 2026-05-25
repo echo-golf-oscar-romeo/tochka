@@ -21,9 +21,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.clients.ddb import ensure_osm_loaded, get_duckdb, register_locations
+from app.clients.ddb import ensure_kontur_loaded, ensure_osm_loaded, get_duckdb, register_locations
 from app.clients.llm import get_llm
 from app.models.network import Network
+from app.orchestrator.chat_tools import maybe_run_tool
 
 log = logging.getLogger(__name__)
 
@@ -120,9 +121,22 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
     try:
         conn = get_duckdb()
         ensure_osm_loaded(conn)
+        ensure_kontur_loaded(conn)
         register_locations(conn, network.locations)
     except Exception as e:
         log.warning("Failed to prep DuckDB tables for chat: %s", e)
+
+    # Route intent-detected prompts (OSM fetch, isochrone, H3 aggregation)
+    # to deterministic tools BEFORE the SQL agent. The tools handle their
+    # own narration + layer payload.
+    try:
+        tool_result = await maybe_run_tool(network=network, message=user_message)
+    except Exception as e:
+        log.warning("Chat tool failed for %r: %s", user_message, e)
+        tool_result = None
+    if tool_result is not None:
+        tool_result.setdefault("provider", llm.provider)
+        return tool_result
 
     # ---- Step 1: generate SQL ----
     system = _skill()
