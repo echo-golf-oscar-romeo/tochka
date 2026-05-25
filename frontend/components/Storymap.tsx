@@ -62,7 +62,12 @@ export default function Storymap({ data }: { data: StorymapResult }) {
         <MapCanvas
           ref={mapHandle}
           layers={data.layers}
-          styleUrl={data.style_url}
+          // Intentionally ignore data.style_url: it's computed server-side
+          // from the backend's own env, which doesn't see Next.js's
+          // NEXT_PUBLIC_* vars, so it always returns the Carto fallback.
+          // Omitting the prop makes MapCanvas use csdiStyleUrl() — the
+          // same client-side basemap logic MapWorkspace uses (Mapbox
+          // custom style when the token is set, Carto otherwise).
           initialCenter={initial as [number, number]}
           initialZoom={data.sections[0]?.location.zoom ?? 11}
         />
