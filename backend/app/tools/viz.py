@@ -106,7 +106,7 @@ def build_isochrones_layer(isochrones: list[dict]) -> Layer:
         "isochrones", "geojson", _fc(isochrones),
         paint={
             "fill-color": PALETTE["isochrone"],
-            "fill-opacity": 0.30,           # ≈ 70 % transparent — polygon rule
+            "fill-opacity": 0.20,           # ≈ 70 % transparent — polygon rule
             "line-color": PALETTE["isochrone"],
             "line-width": 1.5,
             "line-opacity": 0.7,
@@ -159,7 +159,7 @@ def build_opportunity_layer(cells: list[dict]) -> Layer:
                 0.5, "#FA37B2",                    # pink
                 1.0, PALETTE["opportunity_high"],  # magenta
             ],
-            "fill-opacity": 0.30,                  # 70 % transparent — polygon rule
+            "fill-opacity": 0.20,                  # 70 % transparent — polygon rule
             "line-color": PALETTE["opportunity_high"],
             "line-width": 0.5,
             "line-opacity": 0.4,

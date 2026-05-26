@@ -201,6 +201,23 @@ export default function MapWorkspace() {
     });
   }, []);
 
+  const handleReorderLayers = useCallback((nextOrder: string[]) => {
+    setLayers((prev) => {
+      const byId = new Map(prev.map((l) => [l.id, l] as const));
+      const reordered: StoryLayer[] = [];
+      for (const id of nextOrder) {
+        const layer = byId.get(id);
+        if (layer) reordered.push(layer);
+      }
+      // Any layers not in nextOrder (race condition: layer added between
+      // drag start and drop) keep their old slot at the end.
+      for (const layer of prev) {
+        if (!nextOrder.includes(layer.id)) reordered.push(layer);
+      }
+      return reordered;
+    });
+  }, []);
+
   // ----- Chat → Map layer -----
   const chatLayerCountRef = useRef(0);
   const handleAddPointsToMap = useCallback((
@@ -397,6 +414,7 @@ export default function MapWorkspace() {
           layerVisibility={layerVisibility}
           onToggleLayer={handleToggleLayer}
           onRemoveLayer={handleRemoveLayer}
+          onReorderLayers={handleReorderLayers}
           storymapReady={Boolean(storymapId)}
           onOpenStorymap={handleOpenStorymap}
           beautifying={beautifying}

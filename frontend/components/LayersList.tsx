@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import type { Layer as StoryLayer } from "@/lib/storymap";
 
 interface Props {
@@ -7,6 +8,9 @@ interface Props {
   visibility: Record<string, boolean>;
   onToggle: (layerId: string, visible: boolean) => void;
   onRemove?: (layerId: string) => void;
+  /** Re-order callback. `nextOrder` is the new array of layer ids,
+   *  top-of-list first. */
+  onReorder?: (nextOrder: string[]) => void;
 }
 
 const LAYER_LABELS: Record<string, string> = {
@@ -26,14 +30,35 @@ function deriveLabel(layer: StoryLayer): string {
   return layer.id;
 }
 
-export default function LayersList({ layers, visibility, onToggle, onRemove }: Props) {
+export default function LayersList({ layers, visibility, onToggle, onRemove, onReorder }: Props) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  // Avoid re-firing onReorder for no-op rearrangements.
+  const lastEmitted = useRef<string>("");
+
   if (layers.length === 0) {
     return (
       <p className="text-xs text-muted px-1 py-2">
-        Layers appear here as workflows produce them. Toggle to hide / show. Remove to free the canvas.
+        Layers appear here as workflows produce them. Toggle to hide / show. Remove to free the canvas. Drag to reorder.
       </p>
     );
   }
+
+  function reorder(from: string, to: string) {
+    if (!onReorder || from === to) return;
+    const ids = layers.map((l) => l.id);
+    const fromIdx = ids.indexOf(from);
+    const toIdx = ids.indexOf(to);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = ids.slice();
+    next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, from);
+    const key = next.join("|");
+    if (key === lastEmitted.current) return;
+    lastEmitted.current = key;
+    onReorder(next);
+  }
+
   return (
     <ul className="space-y-0.5">
       {layers.map((layer) => {
@@ -41,11 +66,48 @@ export default function LayersList({ layers, visibility, onToggle, onRemove }: P
         const count = featureCount(layer);
         const label = deriveLabel(layer);
         const swatch = layerSwatch(layer);
+        const isDragging = dragId === layer.id;
+        const isDropTarget = overId === layer.id && dragId !== null && dragId !== layer.id;
         return (
           <li
             key={layer.id}
-            className="group flex items-center gap-2 py-1.5 px-1.5 rounded hover:bg-rule transition"
+            draggable={Boolean(onReorder)}
+            onDragStart={(e) => {
+              setDragId(layer.id);
+              e.dataTransfer.effectAllowed = "move";
+              try { e.dataTransfer.setData("text/plain", layer.id); } catch { /* ignore */ }
+            }}
+            onDragOver={(e) => {
+              if (!dragId) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (overId !== layer.id) setOverId(layer.id);
+            }}
+            onDragLeave={() => {
+              if (overId === layer.id) setOverId(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragId) reorder(dragId, layer.id);
+              setDragId(null);
+              setOverId(null);
+            }}
+            onDragEnd={() => { setDragId(null); setOverId(null); }}
+            className={`group flex items-center gap-2 py-1.5 px-1.5 rounded hover:bg-rule transition ${
+              isDragging ? "opacity-40" : ""
+            } ${
+              isDropTarget ? "ring-1 ring-accent-400 ring-inset bg-accent-50" : ""
+            }`}
           >
+            {onReorder && (
+              <span
+                className="cursor-grab active:cursor-grabbing text-subtle hover:text-ink select-none shrink-0 px-1"
+                aria-hidden
+                title="Drag to reorder"
+              >
+                <DragIcon />
+              </span>
+            )}
             <button
               type="button"
               onClick={() => onToggle(layer.id, !visible)}
@@ -92,6 +154,19 @@ export default function LayersList({ layers, visibility, onToggle, onRemove }: P
   );
 }
 
+
+function DragIcon() {
+  return (
+    <svg width="9" height="14" viewBox="0 0 8 14" fill="currentColor" aria-hidden>
+      <circle cx="1.5" cy="2"  r="1" />
+      <circle cx="6.5" cy="2"  r="1" />
+      <circle cx="1.5" cy="7"  r="1" />
+      <circle cx="6.5" cy="7"  r="1" />
+      <circle cx="1.5" cy="12" r="1" />
+      <circle cx="6.5" cy="12" r="1" />
+    </svg>
+  );
+}
 
 function TrashIcon() {
   return (

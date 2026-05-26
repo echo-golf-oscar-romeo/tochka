@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import json as _json
+
 from app.clients.ddb import ensure_kontur_loaded, ensure_osm_loaded, get_duckdb, register_locations
 from app.clients.llm import get_llm
 from app.models.network import Network
@@ -226,10 +228,90 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
             "(LLM narration unavailable — see the raw results.)"
         )
 
+    # If the SQL pulled back a GeoJSON-shaped column, build a polygon layer
+    # so the user sees real geometry on the map (not just points). The
+    # convention documented in SKILL_geosql.md is that any column ending
+    # in `_geojson`, `_geom`, or named `geojson`/`geometry` carries a
+    # serialised GeoJSON geometry.
+    layer = _layer_from_geojson_rows(rows, columns, user_message)
+
     return {
         "answer": answer.strip(),
         "sql": sql,
         "rows": rows,
         "columns": columns,
         "provider": llm.provider,
+        "layer": layer,
+    }
+
+
+def _layer_from_geojson_rows(
+    rows: list[dict[str, Any]],
+    columns: list[str],
+    prompt: str,
+) -> dict[str, Any] | None:
+    """Scan the row set for a GeoJSON-shaped column. If present, build a
+    polygon FeatureCollection layer so the frontend can render real
+    geometry instead of just the row centroid as a point.
+    """
+    if not rows:
+        return None
+    geom_col = None
+    for c in columns:
+        cl = c.lower()
+        if cl.endswith("_geojson") or cl == "geojson" or cl == "geometry" or cl.endswith("_geom"):
+            geom_col = c
+            break
+    if not geom_col:
+        return None
+
+    features: list[dict[str, Any]] = []
+    for r in rows:
+        raw = r.get(geom_col)
+        if not raw:
+            continue
+        if isinstance(raw, dict):
+            geom = raw
+        else:
+            try:
+                geom = _json.loads(str(raw))
+            except Exception:
+                continue
+        if not isinstance(geom, dict) or not geom.get("coordinates"):
+            continue
+        props = {k: v for k, v in r.items() if k != geom_col}
+        features.append({"type": "Feature", "geometry": geom, "properties": props})
+
+    if not features:
+        return None
+
+    # Detect dominant geometry to pick a sensible paint.
+    first_type = (features[0]["geometry"].get("type") or "").lower()
+    is_polygon = first_type in ("polygon", "multipolygon")
+    is_line = first_type in ("linestring", "multilinestring")
+    if is_polygon:
+        paint = {
+            "fill-color": "#4F35F8",
+            "fill-opacity": 0.20,
+            "line-color": "#4F35F8",
+            "line-width": 1.4,
+            "line-opacity": 0.7,
+        }
+    elif is_line:
+        paint = {
+            "line-color": "#4F35F8",
+            "line-width": 2.0,
+            "line-opacity": 0.8,
+        }
+    else:
+        # Point / MultiPoint — let the existing chat-auto-add path handle it.
+        return None
+
+    label = (prompt or "").strip()[:60] or "SQL · geometry"
+    return {
+        "id": f"sql-{abs(hash(prompt)) % 100000:05d}",
+        "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": paint,
+        "label": label,
     }

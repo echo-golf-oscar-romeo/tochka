@@ -204,6 +204,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
       }
     }
     applyVisibility(map, layers, visibility ?? {});
+    applyOrder(map, layers);
     if (autoFit) fitToLayers(map, layers);
   }, [layers, autoFit, visibility]);
 
@@ -270,6 +271,26 @@ function addOrReplaceLayer(map: MlMap, layer: StoryLayer, known: Set<string>) {
     }
   }
   known.add(layer.id);
+}
+
+
+/** Restack map layers so the array order in props matches the visual order:
+ *  array index 0  → topmost on the map (top of the layers panel).
+ *  MapLibre stacks later-added on top, so we walk the array in REVERSE
+ *  and `moveLayer(id)` (no beforeId → move to top) each one. After the
+ *  loop the first array entry is the most-recently-moved-to-top, i.e.
+ *  topmost. Outline companion layers move with their parent. */
+function applyOrder(map: MlMap, layers: StoryLayer[]) {
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const id = layers[i].id;
+    try {
+      if (map.getLayer(id)) map.moveLayer(id);
+      const outlineId = `${id}-outline`;
+      if (map.getLayer(outlineId)) map.moveLayer(outlineId);
+    } catch {
+      /* ignore — layer might have just been removed */
+    }
+  }
 }
 
 

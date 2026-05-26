@@ -20,6 +20,7 @@ interface Props {
   layerVisibility: Record<string, boolean>;
   onToggleLayer: (id: string, visible: boolean) => void;
   onRemoveLayer: (id: string) => void;
+  onReorderLayers?: (nextOrder: string[]) => void;
 
   // Outputs
   storymapReady: boolean;
@@ -33,7 +34,7 @@ export default function WorkspacePanel(props: Props) {
   const {
     networkId, networkSummary, onUpload,
     busy,
-    layers, layerVisibility, onToggleLayer, onRemoveLayer,
+    layers, layerVisibility, onToggleLayer, onRemoveLayer, onReorderLayers,
     storymapReady, onOpenStorymap, beautifying, onBeautify, beautifyNotice,
   } = props;
   const disabled = !networkId || busy;
@@ -77,6 +78,7 @@ export default function WorkspacePanel(props: Props) {
               visibility={layerVisibility}
               onToggle={onToggleLayer}
               onRemove={onRemoveLayer}
+              onReorder={onReorderLayers}
             />
           )}
         </div>
