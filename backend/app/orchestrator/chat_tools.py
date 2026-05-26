@@ -48,7 +48,7 @@ LAYER_PALETTE = [
 # Intent classification
 # ---------------------------------------------------------------------------
 
-Intent = Literal["osm_fetch", "isochrone", "h3_aggregate"]
+Intent = Literal["osm_fetch", "isochrone", "h3_aggregate", "buffer"]
 
 # OSM category → Overpass amenity / shop / tourism tag. Aliases on the right
 # of the colon get normalised to the canonical category on the left.
@@ -96,6 +96,29 @@ _H3_RE = re.compile(
     r"\b(?:h3|hex(?:agon)?s?|hexagonal)\b",
     re.IGNORECASE,
 )
+
+# Buffer intent — two-pass matcher (more robust than one giant regex):
+#   1. `_BUFFER_KEYWORD_RE` — the message must mention "buffer" / "buffer zone".
+#   2. `_BUFFER_RADIUS_RE`  — extract a "<number><unit>" or "<number> <unit>"
+#                            anywhere in the message (hyphenated form
+#                            "250-metre" also accepted).
+#   3. `_BUFFER_SUBJECT_RE` — capture the phrase after a directional
+#                            preposition (from / around / of / for / on /
+#                            across / surrounding) — only if it's adjacent
+#                            to the word "buffer", to avoid grabbing the
+#                            subject's tail when it sits inside e.g.
+#                            "at 400 metres".
+_UNIT = r"k?m|meters?|metres?|kilometers?|kilometres?"
+_BUFFER_KEYWORD_RE = re.compile(r"\bbuffer(?:\s+zone)?s?\b", re.IGNORECASE)
+_BUFFER_RADIUS_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*[-]?\s*(" + _UNIT + r")\b",
+    re.IGNORECASE,
+)
+_BUFFER_SUBJECT_RE = re.compile(
+    r"\b(?:from|around|of|for|on|across|surrounding)\s+(?P<subject>[^?.!]+?)"
+    r"(?:\s+(?:at|with|=)\s+\d|\s*$|[?.!])",
+    re.IGNORECASE,
+)
 # Resolution is extracted with a separate, greedier pattern so it works
 # regardless of where the resolution token appears relative to the h3 keyword.
 _H3_RES_RE = re.compile(
@@ -118,6 +141,10 @@ def classify(message: str) -> ClassifiedIntent | None:
     iso = _match_isochrone(msg)
     if iso is not None:
         return iso
+
+    buf = _match_buffer(msg)
+    if buf is not None:
+        return buf
 
     h3i = _match_h3(msg)
     if h3i is not None:
@@ -165,6 +192,33 @@ def _match_isochrone(msg: str) -> ClassifiedIntent | None:
         "minutes": int(minutes) if minutes else 15,
         "subject": (subject or "").strip() or "user_network",
         "profile": profile,
+    })
+
+
+def _match_buffer(msg: str) -> ClassifiedIntent | None:
+    if not _BUFFER_KEYWORD_RE.search(msg):
+        return None
+    radius_match = _BUFFER_RADIUS_RE.search(msg)
+    if not radius_match:
+        return None
+    radius_m = float(radius_match.group(1))
+    unit = radius_match.group(2).lower()
+    if unit.startswith("k"):
+        radius_m *= 1000
+    if radius_m < 1 or radius_m > 50_000:
+        return None
+
+    subject_match = _BUFFER_SUBJECT_RE.search(msg)
+    subject = ""
+    if subject_match:
+        subject = (subject_match.group("subject") or "").strip().rstrip(",.;")
+        # Drop a trailing " at <number>…" or " with <number>…" if the
+        # regex's anchor didn't already strip it.
+        subject = re.sub(r"\s+(?:at|with|=)\s+\d.*$", "", subject, flags=re.IGNORECASE).strip()
+
+    return ClassifiedIntent("buffer", {
+        "radius_m": radius_m,
+        "subject": subject or "user_network",
     })
 
 
@@ -356,7 +410,7 @@ async def run_isochrone(
         "data": {"type": "FeatureCollection", "features": features},
         "paint": {
             "fill-color": "#4F35F8",
-            "fill-opacity": 0.30,
+            "fill-opacity": 0.20,
             "line-color": "#4F35F8",
             "line-width": 1.5,
             "line-opacity": 0.7,
@@ -393,7 +447,7 @@ def _resolve_subject_points(network: Network, subject: str) -> list[Location]:
             try:
                 rows = conn.execute(
                     "SELECT id, name, lat, lng FROM osm_pois "
-                    "WHERE LOWER(brand) LIKE ? OR LOWER(name) LIKE ? LIMIT 40",
+                    "WHERE LOWER(brand) LIKE ? OR LOWER(name) LIKE ? LIMIT 500",
                     [f"%{kw}%", f"%{kw}%"],
                 ).fetchall()
                 return [_loc_from_row(r) for r in rows]
@@ -404,12 +458,12 @@ def _resolve_subject_points(network: Network, subject: str) -> list[Location]:
     # All competitor banks / atms.
     if "bank" in raw and "atm" not in raw:
         rows = conn.execute(
-            "SELECT id, name, lat, lng FROM osm_pois WHERE type = 'bank' LIMIT 40"
+            "SELECT id, name, lat, lng FROM osm_pois WHERE type = 'bank' LIMIT 500"
         ).fetchall()
         return [_loc_from_row(r) for r in rows]
     if "atm" in raw:
         rows = conn.execute(
-            "SELECT id, name, lat, lng FROM osm_pois WHERE type = 'atm' LIMIT 40"
+            "SELECT id, name, lat, lng FROM osm_pois WHERE type = 'atm' LIMIT 500"
         ).fetchall()
         return [_loc_from_row(r) for r in rows]
 
@@ -418,7 +472,7 @@ def _resolve_subject_points(network: Network, subject: str) -> list[Location]:
         if category[:-1] in raw or category in raw:
             try:
                 rows = conn.execute(
-                    f"SELECT id, name, lat, lng FROM osm_{category} LIMIT 40"
+                    f"SELECT id, name, lat, lng FROM osm_{category} LIMIT 500"
                 ).fetchall()
                 return [_loc_from_row(r) for r in rows]
             except duckdb_error_t():
@@ -436,6 +490,136 @@ def _loc_from_row(r: tuple) -> Location:
     """row is (id, name, lat, lng)."""
     return Location(id=str(r[0]), name=str(r[1] or ""), lat=float(r[2]), lng=float(r[3]),
                     raw_fields={})
+
+
+# ---------------------------------------------------------------------------
+# Buffer tool — DuckDB ST_Buffer producing real polygons.
+# ---------------------------------------------------------------------------
+
+async def run_buffer(*, network: Network, subject: str, radius_m: float) -> dict[str, Any]:
+    """Resolve `subject` to a point list, ST_Buffer each one in EPSG:3857
+    with always_xy=true (critical — without it the geometry comes back
+    empty), transform back to WGS84, and return a polygon layer.
+    """
+    points = _resolve_subject_points(network, subject)
+    if not points:
+        return {
+            "answer": f"I couldn't resolve '{subject}' to any points. Try 'every bank', "
+                      f"'HSBC banks', 'the user network', or load a category first "
+                      f"('add all the schools in hong kong').",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "subject_unresolved",
+        }
+
+    # Cap to keep the demo snappy.
+    MAX_POINTS = 200
+    if len(points) > MAX_POINTS:
+        log.info("Capping buffer subject from %d → %d points", len(points), MAX_POINTS)
+        points = points[:MAX_POINTS]
+
+    conn = get_duckdb()
+    # Build a transient values list and let DuckDB-spatial buffer it in
+    # one SQL call. EPSG:3857 metres → buffer → back to EPSG:4326, with
+    # `always_xy=true` on BOTH transforms so the lng/lat axis order is
+    # honoured (otherwise the polygon coordinates come back empty).
+    rows_values = ",".join(
+        f"('{loc.id.replace(chr(39), chr(39)+chr(39))}', "
+        f"'{(loc.name or '').replace(chr(39), chr(39)+chr(39))}', "
+        f"{loc.lng}, {loc.lat})"
+        for loc in points
+    )
+    try:
+        result = conn.execute(f"""
+            WITH src(id, name, lng, lat) AS (VALUES {rows_values})
+            SELECT
+                id,
+                name,
+                lng,
+                lat,
+                ST_AsGeoJSON(
+                    ST_Transform(
+                        ST_Buffer(
+                            ST_Transform(ST_Point(lng, lat),
+                                         'EPSG:4326', 'EPSG:3857', true),
+                            {radius_m}
+                        ),
+                        'EPSG:3857', 'EPSG:4326', true
+                    )
+                ) AS geojson
+            FROM src
+        """).fetchall()
+    except Exception as e:
+        log.warning("Buffer SQL failed: %s", e)
+        return {
+            "answer": f"Buffer computation failed in DuckDB: {e}",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "buffer_sql_failed",
+        }
+
+    features = []
+    import json as _json
+    for (id_, name, lng, lat, geojson) in result:
+        if not geojson:
+            continue
+        try:
+            geom = _json.loads(geojson)
+        except Exception:
+            continue
+        if not geom.get("coordinates"):
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {
+                "id": id_,
+                "name": name,
+                "radius_m": radius_m,
+                "centre_lng": lng,
+                "centre_lat": lat,
+            },
+        })
+
+    if not features:
+        return {
+            "answer": f"Buffer produced no polygons for '{subject}'. "
+                      f"This usually means the coordinate transform failed silently — "
+                      f"check that the subject points have valid lat/lng.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "buffer_empty",
+        }
+
+    label_subject = subject if subject and subject != "user_network" else "your network"
+    radius_label = f"{int(radius_m)} m" if radius_m < 1000 else f"{radius_m / 1000:g} km"
+    layer = {
+        "id": f"buffer-chat-{int(radius_m)}m-{abs(hash(subject)) % 1000:03d}",
+        "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": {
+            "fill-color": "#4F35F8",
+            "fill-opacity": 0.20,
+            "line-color": "#4F35F8",
+            "line-width": 1.4,
+            "line-opacity": 0.7,
+        },
+        "label": f"{radius_label} buffer · {label_subject}",
+    }
+    answer = (
+        f"Built {len(features)} {radius_label} buffer polygon(s) around "
+        f"{label_subject}. Layer is on the map at 20 % fill opacity — "
+        f"drag it up or down in the right-hand panel to change stacking."
+    )
+    return {
+        "answer": answer,
+        "rows": [
+            {"id": f["properties"]["id"], "name": f["properties"]["name"],
+             "centre_lat": f["properties"]["centre_lat"], "centre_lng": f["properties"]["centre_lng"]}
+            for f in features[:50]
+        ],
+        "columns": ["id", "name", "centre_lat", "centre_lng"],
+        "sql": None,
+        "layer": layer,
+        "provider": "duckdb_st_buffer",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +709,7 @@ async def run_h3_aggregate(*, network: Network, resolution: int) -> dict[str, An
                 3.0, "#FB3640",
                 10.0, "#C637FA",
             ],
-            "fill-opacity": 0.30,
+            "fill-opacity": 0.20,
             "line-color": "#0A0903",
             "line-width": 0.4,
             "line-opacity": 0.5,
@@ -606,4 +790,10 @@ async def maybe_run_tool(*, network: Network, message: str) -> dict[str, Any] | 
         )
     if intent.kind == "h3_aggregate":
         return await run_h3_aggregate(network=network, resolution=intent.params["resolution"])
+    if intent.kind == "buffer":
+        return await run_buffer(
+            network=network,
+            subject=intent.params["subject"],
+            radius_m=intent.params["radius_m"],
+        )
     return None

@@ -67,3 +67,22 @@ def test_classify_h3(prompt: str, expected_res: int) -> None:
 ])
 def test_classify_falls_through_to_sql(prompt: str) -> None:
     assert classify(prompt) is None, f"{prompt!r} should NOT be intercepted"
+
+
+@pytest.mark.parametrize("prompt, radius_m", [
+    # The literal demo prompt the user asked for.
+    ("make a buffer zone 500m from every bank", 500.0),
+    # Radius before "buffer".
+    ("500m buffer around every bank", 500.0),
+    ("draw a 250-metre buffer around HSBC", 250.0),
+    # km units.
+    ("1km buffer zone around all banks", 1000.0),
+    ("buffer of 2 km from my network", 2000.0),
+    # Pluralised, no verb, "for" preposition.
+    ("buffers for HSBC banks at 400 metres", 400.0),
+])
+def test_classify_buffer(prompt: str, radius_m: float) -> None:
+    intent = classify(prompt)
+    assert intent is not None, f"{prompt!r} should be classified"
+    assert intent.kind == "buffer", intent
+    assert intent.params["radius_m"] == radius_m, intent
