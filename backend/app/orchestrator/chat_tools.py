@@ -48,7 +48,7 @@ LAYER_PALETTE = [
 # Intent classification
 # ---------------------------------------------------------------------------
 
-Intent = Literal["osm_fetch", "isochrone", "h3_aggregate", "buffer"]
+Intent = Literal["osm_fetch", "osm_freeform", "isochrone", "h3_aggregate", "buffer"]
 
 # OSM category → Overpass amenity / shop / tourism tag. Aliases on the right
 # of the colon get normalised to the canonical category on the left.
@@ -137,6 +137,11 @@ def classify(message: str) -> ClassifiedIntent | None:
     """Return the recognised intent + extracted params, or None."""
     msg = message.strip()
 
+    # Slash-prefixed commands take priority — they're explicit.
+    free = _match_osm_freeform(msg)
+    if free is not None:
+        return free
+
     # Order matters: try the most specific first.
     iso = _match_isochrone(msg)
     if iso is not None:
@@ -155,6 +160,22 @@ def classify(message: str) -> ClassifiedIntent | None:
         return osm
 
     return None
+
+
+_OSM_SLASH_RE = re.compile(r"^\s*/osm\b[:\s]*(?P<query>.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def _match_osm_freeform(msg: str) -> ClassifiedIntent | None:
+    """Match the explicit slash command `/osm <natural-language query>`.
+    Free-form OSM lookups go through an LLM-translated Overpass call —
+    not the preset-category path."""
+    m = _OSM_SLASH_RE.match(msg)
+    if not m:
+        return None
+    query = (m.group("query") or "").strip()
+    if not query:
+        return None
+    return ClassifiedIntent("osm_freeform", {"query": query})
 
 
 def _match_osm_fetch(msg: str) -> ClassifiedIntent | None:
@@ -493,6 +514,352 @@ def _loc_from_row(r: tuple) -> Location:
 
 
 # ---------------------------------------------------------------------------
+# Free-form OSM tool — `/osm <natural language>` → Overpass QL → map layer.
+# ---------------------------------------------------------------------------
+
+_OSM_TRANSLATOR_SYSTEM = """You translate natural-language requests into OpenStreetMap Overpass QL filter expressions for Hong Kong.
+
+Respond with EXACTLY ONE JSON object — no prose, no markdown fences, no commentary. Schema:
+
+{
+  "name":    "<short snake_case label, e.g. 'cafes', 'parks', 'mtr_exits', 'bridges_kln'>",
+  "filters": ["<filter1>", "<filter2>", ...]
+}
+
+Each filter is ONE Overpass query line of the form:
+  node["amenity"="cafe"]
+  way["leisure"="park"]
+  relation["boundary"="administrative"]
+  node["amenity"~"cafe|restaurant"]
+  way["highway"="primary"]["name"~"Queen"]   (multiple bracketed AND filters)
+
+Hard rules:
+  - DO NOT include the bbox (the backend appends Hong Kong's bbox to each line).
+  - DO NOT include `out`, `[out:json]`, `[timeout:N]`, `(` union wrappers, or `>;` recursion.
+  - Each filter is a SINGLE statement — no semicolons inside it.
+  - For most POI categories include BOTH `node` and `way` (people tag the same thing both ways).
+  - For polygons/areas (parks, lakes, buildings, schools-as-area) include `way` and `relation`.
+  - For roads or rivers include `way`.
+  - Maximum 6 filters.
+
+Examples:
+
+  Query: "cafes"
+  → {"name": "cafes", "filters": ["node[\\"amenity\\"=\\"cafe\\"]", "way[\\"amenity\\"=\\"cafe\\"]"]}
+
+  Query: "parks and gardens"
+  → {"name": "parks", "filters": ["way[\\"leisure\\"~\\"park|garden\\"]", "relation[\\"leisure\\"~\\"park|garden\\"]"]}
+
+  Query: "MTR station exits"
+  → {"name": "mtr_exits", "filters": ["node[\\"railway\\"=\\"subway_entrance\\"]"]}
+
+  Query: "primary roads named Queen's Road"
+  → {"name": "queens_rd", "filters": ["way[\\"highway\\"=\\"primary\\"][\\"name\\"~\\"Queen\\"]"]}
+
+  Query: "every Starbucks"
+  → {"name": "starbucks", "filters": ["node[\\"amenity\\"=\\"cafe\\"][\\"brand\\"~\\"Starbucks\\",i]", "node[\\"brand:wikidata\\"=\\"Q37158\\"]"]}
+"""
+
+
+_OVERPASS_FILTER_RE = re.compile(
+    r"^\s*(?:node|way|relation|nwr)\s*"
+    r"(?:\[[^\];]+\])+\s*$",
+    re.IGNORECASE,
+)
+
+
+def _safe_overpass_filter(line: str) -> bool:
+    """Belt-and-braces validation of one filter line. Reject anything that
+    could escape into the surrounding query (semicolons, recursive ops,
+    union wrappers, output directives)."""
+    if ";" in line or ">" in line or "<" in line:
+        return False
+    if "out " in line.lower() or "out;" in line.lower():
+        return False
+    if "(" in line or ")" in line:
+        # We add the (bbox) parens ourselves — filters shouldn't have them.
+        return False
+    return bool(_OVERPASS_FILTER_RE.match(line.strip()))
+
+
+def _parse_translator_json(raw: str) -> dict | None:
+    """Tolerate light wrapping (markdown fence, leading prose) and pull the
+    first JSON object out of the LLM response."""
+    import json as _json
+
+    if not raw:
+        return None
+    # Strip ```json … ``` if present.
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    if fence:
+        raw = fence.group(1)
+    # Fall back to first {...} block in the text.
+    blob = re.search(r"\{[\s\S]*\}", raw)
+    if not blob:
+        return None
+    try:
+        obj = _json.loads(blob.group(0))
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name")
+    filters = obj.get("filters")
+    if not isinstance(name, str) or not isinstance(filters, list):
+        return None
+    if not all(isinstance(f, str) for f in filters):
+        return None
+    return {"name": name, "filters": filters[:6]}
+
+
+def _slugify(s: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_]+", "_", s.strip().lower())
+    return s.strip("_") or "freeform"
+
+
+def _osm_element_to_feature(el: dict) -> dict | None:
+    """Convert one Overpass element (with `out geom tags`) to a GeoJSON
+    Feature — picking Point / LineString / Polygon based on shape."""
+    t = el.get("type")
+    tags = el.get("tags") or {}
+    base_props: dict[str, Any] = {
+        "id": f"{t}/{el.get('id')}",
+        "name": tags.get("name") or tags.get("operator") or tags.get("brand") or "",
+        "brand": tags.get("brand"),
+    }
+    # Copy a few useful tags onto top-level props for popup readability.
+    for k in ("amenity", "shop", "tourism", "leisure", "highway", "railway", "natural"):
+        v = tags.get(k)
+        if v:
+            base_props[k] = v
+
+    if t == "node":
+        lat, lng = el.get("lat"), el.get("lon")
+        if lat is None or lng is None:
+            return None
+        base_props["lat"] = float(lat)
+        base_props["lng"] = float(lng)
+        return {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(lng), float(lat)]},
+            "properties": base_props,
+        }
+
+    if t == "way":
+        geom = el.get("geometry") or []
+        if len(geom) < 2:
+            # Way without expanded geometry — fall back to center.
+            c = el.get("center") or {}
+            if c.get("lat") is None or c.get("lon") is None:
+                return None
+            base_props["lat"] = float(c["lat"])
+            base_props["lng"] = float(c["lon"])
+            return {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(c["lon"]), float(c["lat"])]},
+                "properties": base_props,
+            }
+        coords = [[float(p["lon"]), float(p["lat"])] for p in geom]
+        closed = len(coords) >= 4 and coords[0] == coords[-1]
+        if closed:
+            return {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": base_props,
+            }
+        return {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": base_props,
+        }
+
+    if t == "relation":
+        # Overpass with `out geom` for relations returns each member's
+        # geometry — stitch outer rings only. For complex relations the
+        # result is approximate; precise multipolygon reassembly is out
+        # of scope here. Skip if we can't get an obvious centroid.
+        members = el.get("members") or []
+        outer_rings: list[list[list[float]]] = []
+        for m in members:
+            if m.get("role") != "outer":
+                continue
+            mg = m.get("geometry") or []
+            if len(mg) < 4:
+                continue
+            ring = [[float(p["lon"]), float(p["lat"])] for p in mg]
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
+            outer_rings.append(ring)
+        if outer_rings:
+            geom_type = "Polygon" if len(outer_rings) == 1 else "MultiPolygon"
+            geom_obj = (
+                {"type": "Polygon", "coordinates": [outer_rings[0]]}
+                if geom_type == "Polygon"
+                else {"type": "MultiPolygon", "coordinates": [[r] for r in outer_rings]}
+            )
+            return {"type": "Feature", "geometry": geom_obj, "properties": base_props}
+        return None
+
+    return None
+
+
+def _layer_paint_for_geometry(geom_types: set[str]) -> dict[str, Any]:
+    """Choose paint based on dominant geometry type in the result set."""
+    if "Polygon" in geom_types or "MultiPolygon" in geom_types:
+        return {
+            "fill-color": "#37B2FA",
+            "fill-opacity": 0.20,
+            "line-color": "#37B2FA",
+            "line-width": 1.2,
+            "line-opacity": 0.7,
+        }
+    if "LineString" in geom_types or "MultiLineString" in geom_types:
+        return {
+            "line-color": "#FA8237",
+            "line-width": 2.0,
+            "line-opacity": 0.85,
+        }
+    return {
+        "circle-color": "#FA37B2",
+        "circle-radius": 5,
+        "circle-stroke-color": "#FDFDFD",
+        "circle-stroke-width": 1.5,
+    }
+
+
+async def run_osm_freeform(*, query: str) -> dict[str, Any]:
+    """Translate the user's natural-language query into Overpass QL via
+    LLM, validate, fetch, and return a layer."""
+    from app.clients.llm import get_llm
+
+    llm = get_llm()
+    if not llm.has_key:
+        return {
+            "answer": "LLM provider isn't configured (no API key), so I can't translate "
+                      "the OSM query. Set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY and retry.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "no_api_key",
+        }
+
+    raw = await llm.chat(
+        messages=[
+            {"role": "system", "content": _OSM_TRANSLATOR_SYSTEM},
+            {"role": "user", "content": f"Query: {query}\n\nReturn the JSON object only."},
+        ],
+        temperature=0.1,
+        max_tokens=400,
+    )
+    parsed = _parse_translator_json(raw or "")
+    if not parsed:
+        return {
+            "answer": "I couldn't translate that into Overpass QL. Try a more concrete "
+                      "phrasing — e.g. `/osm parks and gardens`, `/osm Starbucks branches`, "
+                      "or `/osm primary roads named Queen`.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "translator_failed",
+        }
+
+    filters = [f for f in parsed["filters"] if _safe_overpass_filter(f)]
+    if not filters:
+        log.info("OSM translator produced no safe filters. Raw: %s", raw[:300] if raw else "")
+        return {
+            "answer": "The translation came back with no usable filter lines. Try rephrasing.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "no_safe_filters",
+        }
+
+    name = _slugify(parsed["name"])
+    body = "\n  ".join(f"{f}({HK_BBOX});" for f in filters)
+    overpass_query = f"[out:json][timeout:30];\n(\n  {body}\n);\nout geom tags;"
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        try:
+            r = await client.post(OVERPASS_URL, data={"data": overpass_query})
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("Overpass freeform fetch failed for %r: %s", query, e)
+            return {
+                "answer": f"Couldn't reach Overpass: {e}",
+                "rows": [], "columns": [], "layer": None, "sql": None,
+                "error": "overpass_failed",
+            }
+
+    features: list[dict] = []
+    geom_types: set[str] = set()
+    for el in data.get("elements", []):
+        feat = _osm_element_to_feature(el)
+        if not feat:
+            continue
+        features.append(feat)
+        geom_types.add(feat["geometry"]["type"])
+
+    if not features:
+        return {
+            "answer": f"Overpass returned 0 features for /osm `{query}`. "
+                      f"Filter line(s) tried: `{'`, `'.join(filters)}`. "
+                      "Try a simpler phrasing.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "no_results",
+        }
+
+    # Register point-shaped rows as a DuckDB table so SQL follow-ups work
+    # (only points carry lat/lng cleanly — way/relation geoms are too rich
+    # for a flat table). Polygons/lines are still on the map as the layer.
+    point_rows = [
+        {
+            "id": f["properties"]["id"],
+            "name": f["properties"]["name"] or "",
+            "brand": f["properties"].get("brand"),
+            "lat": f["properties"].get("lat"),
+            "lng": f["properties"].get("lng"),
+        }
+        for f in features
+        if f["geometry"]["type"] == "Point" and f["properties"].get("lat") is not None
+    ]
+    table_name = f"osm_{name}"
+    if point_rows:
+        conn = get_duckdb()
+        register_kv_table(
+            conn, table_name, point_rows,
+            [("id", "VARCHAR"), ("name", "VARCHAR"), ("brand", "VARCHAR"),
+             ("lat", "DOUBLE"), ("lng", "DOUBLE")],
+        )
+
+    layer_id = f"osm-free-{name}-{abs(hash(query)) % 1000:03d}"
+    layer = {
+        "id": layer_id,
+        "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": _layer_paint_for_geometry(geom_types),
+        "label": f"OSM · {name} ({len(features)})",
+    }
+
+    geom_summary = ", ".join(sorted(geom_types))
+    table_note = (
+        f" SQL: `SELECT name, lat, lng FROM {table_name} LIMIT 10;`"
+        if point_rows else " (Polygons/lines not registered as a SQL table — query OSM again to refine.)"
+    )
+    answer = (
+        f"Loaded {len(features):,} OSM features for `{query}` ({geom_summary}). "
+        f"Filters used: `{'`, `'.join(filters)}`.{table_note}"
+    )
+    rows_preview = [
+        {"id": f["properties"]["id"], "name": f["properties"]["name"] or "",
+         "lat": f["properties"].get("lat"), "lng": f["properties"].get("lng")}
+        for f in features[:50]
+    ]
+    return {
+        "answer": answer,
+        "rows": rows_preview,
+        "columns": ["id", "name", "lat", "lng"],
+        "sql": None,
+        "layer": layer,
+        "provider": "osm_freeform",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Buffer tool — DuckDB ST_Buffer producing real polygons.
 # ---------------------------------------------------------------------------
 
@@ -781,6 +1148,8 @@ async def maybe_run_tool(*, network: Network, message: str) -> dict[str, Any] | 
     log.info("chat tool intent: %s params=%s", intent.kind, intent.params)
     if intent.kind == "osm_fetch":
         return await run_osm_fetch(intent.params["category"], intent.params.get("raw"))
+    if intent.kind == "osm_freeform":
+        return await run_osm_freeform(query=intent.params["query"])
     if intent.kind == "isochrone":
         return await run_isochrone(
             network=network,

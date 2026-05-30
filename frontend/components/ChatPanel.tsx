@@ -129,19 +129,33 @@ export default function ChatPanel({
 
   const sug = suggestions && suggestions.length > 0 ? suggestions : DEFAULT_SUGGESTIONS;
 
-  // Slash menu — current layer names as completions.
-  const slashOptions = useMemo(() => {
-    const head = input.split(/\s+/).pop() ?? "";
+  // Slash menu — at start of input, surface chat commands. Mid-message,
+  // fall back to layer-name completion.
+  const slashOptions = useMemo<Array<{ label: string; insert: string; hint?: string }>>(() => {
+    const trimmed = input.trimStart();
+    const tokens = input.split(/\s+/);
+    const head = tokens[tokens.length - 1] ?? "";
     if (!head.startsWith("/")) return [];
+
+    // At the very start? Show top-level commands.
+    if (input === head || trimmed === head) {
+      const q = head.slice(1).toLowerCase();
+      const cmds = [
+        { label: "/osm <query>", insert: "/osm ", hint: "fetch OSM features for HK" },
+      ];
+      return cmds.filter((c) => c.label.toLowerCase().includes(q));
+    }
+    // Mid-message: completing a layer name.
     const q = head.slice(1).toLowerCase();
-    return (layerNames ?? []).filter((n) => n.toLowerCase().includes(q));
+    return (layerNames ?? [])
+      .filter((n) => n.toLowerCase().includes(q))
+      .map((n) => ({ label: n, insert: `"${n}" ` }));
   }, [input, layerNames]);
 
-  function pickSlash(option: string) {
-    // Replace the in-progress /token with the chosen quoted layer name.
+  function pickSlash(option: { label: string; insert: string }) {
     const tokens = input.split(/\s+/);
-    tokens[tokens.length - 1] = `"${option}"`;
-    setInput(tokens.join(" ") + " ");
+    tokens[tokens.length - 1] = option.insert.trimEnd();
+    setInput(tokens.join(" ") + (option.insert.endsWith(" ") ? " " : ""));
     setSlashOpen(false);
   }
 
@@ -151,7 +165,7 @@ export default function ChatPanel({
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="text-muted text-xs leading-relaxed">
-              The agent writes a read-only spatial SELECT against your network + the HK competitor table, runs it, and explains the result. Type <code className="text-ink">/</code> to reference a layer.
+              Ask anything spatial. The agent writes read-only SQL against your network + HK competitors, OR routes the question to one of four specialist tools: <code className="text-ink">/osm</code> for free-form OpenStreetMap fetches, plus auto-recognised buffers, isochrones, and H3 aggregations. Mid-message, type <code className="text-ink">/</code> to reference an existing layer.
             </p>
             <div className="space-y-1.5">
               {sug.map((s) => (
@@ -189,17 +203,18 @@ export default function ChatPanel({
         {slashOpen && slashOptions.length > 0 && (
           <div className="absolute bottom-full left-2 right-2 mb-1 rounded border border-border bg-canvas shadow-pop max-h-44 overflow-y-auto">
             <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-muted border-b border-border">
-              Insert layer
+              {slashOptions[0].hint ? "Commands" : "Insert layer"}
             </div>
             <ul>
               {slashOptions.map((opt) => (
-                <li key={opt}>
+                <li key={opt.label}>
                   <button
                     type="button"
                     onClick={() => pickSlash(opt)}
                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent-50 hover:text-accent-700"
                   >
-                    {opt}
+                    <span className="font-mono">{opt.label}</span>
+                    {opt.hint && <span className="ml-2 text-[11px] text-muted">{opt.hint}</span>}
                   </button>
                 </li>
               ))}
@@ -209,7 +224,7 @@ export default function ChatPanel({
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder={handleId ? "Ask about your network…" : "Upload a network first"}
+            placeholder={handleId ? "Ask about your network, or try /osm cafes near central…" : "Upload a network first"}
             value={input}
             onChange={(e) => {
               const v = e.target.value;
