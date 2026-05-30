@@ -69,6 +69,28 @@ def test_classify_falls_through_to_sql(prompt: str) -> None:
     assert classify(prompt) is None, f"{prompt!r} should NOT be intercepted"
 
 
+@pytest.mark.parametrize("prompt, expected_query", [
+    ("/osm cafes near central", "cafes near central"),
+    ("/osm primary roads named Queen", "primary roads named Queen"),
+    ("/OSM: every Starbucks", "every Starbucks"),
+    ("  /osm parks and gardens  ", "parks and gardens"),
+])
+def test_classify_osm_freeform(prompt: str, expected_query: str) -> None:
+    intent = classify(prompt)
+    assert intent is not None, f"{prompt!r} should be classified"
+    assert intent.kind == "osm_freeform", intent
+    assert intent.params["query"] == expected_query, intent
+
+
+def test_classify_osm_freeform_takes_priority_over_osm_fetch() -> None:
+    # `/osm find schools` shouldn't get hijacked by the preset-category
+    # OSM matcher even though it has 'find' + 'schools' in it.
+    intent = classify("/osm find schools and kindergartens")
+    assert intent is not None
+    assert intent.kind == "osm_freeform"
+    assert "schools" in intent.params["query"]
+
+
 @pytest.mark.parametrize("prompt, radius_m", [
     # The literal demo prompt the user asked for.
     ("make a buffer zone 500m from every bank", 500.0),
