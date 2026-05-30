@@ -265,6 +265,14 @@ def _match_h3(msg: str) -> ClassifiedIntent | None:
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 HK_BBOX = "22.15,113.83,22.57,114.45"   # S,W,N,E
 
+# Overpass-api.de's operators rate-limit / block requests that arrive with
+# the default `python-httpx/X.Y` User-Agent (it gets the request a 406 with
+# Apache's generic "Not Acceptable" page — nothing to do with the actual
+# query). A real, identifiable UA gets through normally.
+OVERPASS_HEADERS = {
+    "User-Agent": "tochka/0.1 (https://github.com/echo-golf-oscar-romeo/tochka)",
+}
+
 
 async def run_osm_fetch(category: str, raw: str | None = None) -> dict[str, Any]:
     """Hit Overpass for the category, register the result as `osm_<category>`
@@ -288,7 +296,7 @@ async def run_osm_fetch(category: str, raw: str | None = None) -> dict[str, Any]
     """.strip()
 
     rows: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, headers=OVERPASS_HEADERS) as client:
         try:
             r = await client.post(OVERPASS_URL, data={"data": query})
             r.raise_for_status()
@@ -770,12 +778,24 @@ async def run_osm_freeform(*, query: str) -> dict[str, Any]:
 
     name = _slugify(parsed["name"])
     body = "\n  ".join(f"{f}({HK_BBOX});" for f in filters)
-    overpass_query = f"[out:json][timeout:30];\n(\n  {body}\n);\nout geom tags;"
+    # `out geom;` == `out body geom;` — returns ids + tags + members +
+    # expanded geometry. Note: `out geom tags;` is INVALID syntax because
+    # `tags` is itself an output-type specifier that conflicts with `body`.
+    overpass_query = f"[out:json][timeout:30];\n(\n  {body}\n);\nout geom;"
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
+    async with httpx.AsyncClient(timeout=45.0, headers=OVERPASS_HEADERS) as client:
         try:
             r = await client.post(OVERPASS_URL, data={"data": overpass_query})
-            r.raise_for_status()
+            if r.status_code >= 400:
+                log.warning(
+                    "Overpass freeform HTTP %s for %r. Body: %s | Query: %s",
+                    r.status_code, query, r.text[:300], overpass_query[:300],
+                )
+                return {
+                    "answer": f"Overpass {r.status_code}: {r.text[:200] if r.text else '(no body)'}",
+                    "rows": [], "columns": [], "layer": None, "sql": None,
+                    "error": "overpass_http",
+                }
             data = r.json()
         except Exception as e:
             log.warning("Overpass freeform fetch failed for %r: %s", query, e)
