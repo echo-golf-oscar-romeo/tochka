@@ -174,8 +174,14 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
     system += (
         "\n\n## FINAL REMINDER\n"
         "Respond with EXACTLY one read-only SQL SELECT wrapped in `<sql>…</sql>` tags. "
-        "Do not include any prose, markdown, explanations, or comments outside the tags. "
-        "If the question is out of scope, return the standard 'Not answerable' SELECT inside `<sql>…</sql>` tags as described above."
+        "Do not include any prose, markdown, explanations, or comments outside the tags.\n\n"
+        "If the rows are point features (banks, ATMs, branches, OSM POIs, user "
+        "locations — anything with lat/lng), you MUST include `lat` and `lng` "
+        "in the SELECT projection so the frontend can render them on the map. "
+        "Skip this only for pure aggregations (COUNT/SUM/AVG/GROUP BY with no "
+        "single representative point).\n\n"
+        "If the question is out of scope, return the standard 'Not answerable' "
+        "SELECT inside `<sql>…</sql>` tags as described above."
     )
     messages = (
         [{"role": "system", "content": system}]

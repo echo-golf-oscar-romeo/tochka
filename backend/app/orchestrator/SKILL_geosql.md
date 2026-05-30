@@ -107,6 +107,28 @@ ST_Contains(ST_GeomFromGeoJSON(p.geojson_text), ST_Point(pt.lng, pt.lat))
 
 **3. ST_Distance_Spheroid returns metres.** No projection needed.
 
+**4. ALWAYS project `lat` and `lng` when the rows are point features
+(branches, banks, ATMs, OSM POIs, anything from `osm_pois`,
+`osm_<category>`, or `_user_locations`).** The frontend uses those two
+columns to render the result as a layer on the main map. Without them,
+the answer shows up as a table only — invisible on the map.
+
+For aggregations (COUNT, GROUP BY where a single lat/lng isn't
+meaningful), skip this. For row-level point queries it is mandatory.
+
+Good projection:
+```sql
+SELECT o.brand, o.name, o.lat, o.lng,    -- ← lat,lng included
+       ROUND(ST_Distance_Spheroid(...), 1) AS distance_m
+FROM osm_pois o, _user_locations u
+WHERE ...
+```
+
+Bad projection (won't render on the map):
+```sql
+SELECT o.brand, o.name, distance_m FROM ...
+```
+
 ---
 
 ## Safety rules — ENFORCED
@@ -126,7 +148,7 @@ Always use `ILIKE '%…%'` for the branch-name match — the user types a
 loose phrase ("hku", "sham shui po") but the row may be longer.
 
 ```sql
-SELECT o.brand, o.name, o.type,
+SELECT o.brand, o.name, o.type, o.lat, o.lng,
        ROUND(ST_Distance_Spheroid(ST_Point(o.lat,o.lng), ST_Point(u.lat,u.lng)), 1) AS distance_m
 FROM osm_pois o, _user_locations u
 WHERE u.name ILIKE '%hku%'
@@ -185,6 +207,7 @@ LIMIT 20;
 ### 5. Pairs of user branches under N metres of each other (cannibalisation)
 ```sql
 SELECT a.name AS branch_a, b.name AS branch_b,
+       a.lat AS lat, a.lng AS lng,
        ROUND(ST_Distance_Spheroid(ST_Point(a.lat,a.lng), ST_Point(b.lat,b.lng)), 0) AS distance_m
 FROM _user_locations a
 JOIN _user_locations b
