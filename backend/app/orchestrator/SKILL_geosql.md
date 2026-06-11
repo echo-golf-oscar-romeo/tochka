@@ -49,6 +49,35 @@ fall-back grid otherwise (still useful, decays from Central outwards).
 Use this for catchment-population queries, opportunity scoring, gravity models,
 and anywhere the user asks "how many people live within X" or "where's underserved demand?".
 
+### `csdi_pois` — official Hong Kong POIs (CSDI iGeoCom, 37,378 rows)
+Pre-loaded on backend startup from the committed CSDI parquet. Real
+government data — prefer this over OSM when the user asks about schools,
+clinics, transport, government or community facilities.
+
+| column      | type    | notes |
+|-------------|---------|-------|
+| geonameid   | BIGINT  | CSDI GeoName id |
+| name_en     | VARCHAR | English name (may be NULL for utilities) |
+| name_zh     | VARCHAR | Chinese name |
+| class       | VARCHAR | raw 3-letter CSDI class code (SCH, AMD, TRS, …) |
+| type        | VARCHAR | raw CSDI type code within the class |
+| category    | VARCHAR | friendly label — one of: school, medical, transport, commercial, government, religious, cultural, recreation, park, municipal, utility, business, community, building |
+| lat / lng   | DOUBLE  | WGS84 |
+| district_en | VARCHAR | district name (often present, unlike osm_pois) |
+| address_en  | VARCHAR | street address when known |
+
+Example — schools within 1 km of a branch:
+```sql
+SELECT c.name_en, c.category, c.lat, c.lng,
+       ROUND(ST_Distance_Spheroid(ST_Point(c.lat,c.lng), ST_Point(u.lat,u.lng)), 0) AS distance_m
+FROM csdi_pois c, _user_locations u
+WHERE u.name ILIKE '%hku%'
+  AND c.category = 'school'
+  AND ST_Distance_Spheroid(ST_Point(c.lat,c.lng), ST_Point(u.lat,u.lng)) <= 1000
+ORDER BY distance_m
+LIMIT 25;
+```
+
 ### Dynamic `osm_<category>` — on-demand POI tables
 When the user asks something like *"find all schools in Hong Kong"*, the chat
 tool router fetches the relevant OSM amenity tag from Overpass and registers
@@ -257,6 +286,18 @@ listable on the chat map.
 2. **Pick the smallest query that answers it.** Prefer aggregation over row dumps.
 3. **Apply the syntax rules above.** Always `ST_Point(lat, lng)` for `ST_Distance_Spheroid`; always `ST_Point(lng, lat)` for `ST_Contains`.
 4. **Output ONE SQL query, inside `<sql>…</sql>` tags.** Nothing else.
+
+## When the question wants a METHOD, not SQL
+
+The platform has dedicated analytical tools that run OUTSIDE this SQL loop:
+coverage optimisation (p-median / LSCP / MCLP), best-new-site ranking,
+whitespace gap detection, hot-spot statistics (Moran's I / LISA / Gi*),
+look-alike similarity search, network segmentation, drivers regression,
+2SFCA accessibility, isochrones, and buffers. Questions like "where should
+I open next?", "find hot spots", or "which areas look like Central?" are
+routed to those tools BEFORE you are called — so if you receive a question
+like that anyway, answer the SQL-able part (e.g. raw counts) and mention
+the dedicated tool exists rather than approximating the method in SQL.
 
 ## When the question is out of scope
 

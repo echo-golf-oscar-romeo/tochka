@@ -33,6 +33,20 @@ class Layer(BaseModel):
     paint: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChartSpec(BaseModel):
+    """A renderable chart block inside a report section.
+
+    `data` rows are {label, value} (+ optional value2 for scatter, where
+    value=x and value2=y). The frontend maps `kind` to a Recharts component.
+    """
+    kind: Literal["bar", "area", "donut", "scatter", "rank"]
+    title: str
+    subtitle: str | None = None
+    unit: str | None = None                # e.g. "residents", "%", "HK$"
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None              # e.g. "Kontur population · CSDI"
+
+
 class StorymapSection(BaseModel):
     """One scroll-step. Matches Mapbox Storytelling chapter shape closely."""
     id: str                                # 'network-glance', 'who-you-reach', …
@@ -44,6 +58,7 @@ class StorymapSection(BaseModel):
     on_exit: list[LayerOp] = Field(default_factory=list)
     callouts: list[str] = Field(default_factory=list)
     kpis: dict[str, str] = Field(default_factory=dict)
+    charts: list[ChartSpec] = Field(default_factory=list)
 
 
 class StorymapResult(BaseModel):

@@ -21,6 +21,10 @@ dependencies = [
     "qwen-agent>=0.0.10",
     # Demo-mode helpers — pure-Python geometry without the GDAL chain.
     "numpy>=1.26",
+    "pulp>=3.3.2",
+    "scipy>=1.17.1",
+    "scikit-learn>=1.9.0",
+    "networkx>=3.6.1",
 ]
 
 [dependency-groups]
@@ -42,3 +46,8 @@ select = ["E", "F", "I", "B", "UP"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    # PuLP 3.x emits deprecation notices for LpVariable() + PULP_CBC_CMD that
+    # are slated for 4.0; our usage is fine on the pinned 3.x. Mute the noise.
+    "ignore::DeprecationWarning:pulp.*",
+]

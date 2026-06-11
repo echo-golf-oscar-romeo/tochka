@@ -34,27 +34,18 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
 
-    # Vision LLM (for the beautify-map agent).
-    # Provider names: "qwen" (DashScope), "deepseek" (placeholder until
-    # DeepSeek publishes a vision API), or "openrouter" (recommended when
-    # DashScope is pending — routes to Qwen2.5-VL via OpenRouter).
-    # API key + base URL fall back to the matching provider's defaults but
-    # can be overridden via VISION_API_KEY / VISION_BASE_URL.
-    vision_provider: str = "qwen"
-    vision_api_key: str = ""
-    vision_base_url: str = ""
-    qwen_vision_model: str = "qwen-vl-max"
-    deepseek_vision_model: str = "deepseek-vl2"
-
-    # OpenRouter — multi-provider routing. Works in HK; openly-licensed
-    # models like Qwen2.5-VL are cheap (~$0.40 / M input tokens).
+    # OpenRouter — multi-provider routing fallback. Works in HK; openly-
+    # licensed Qwen models are cheap (~$0.40 / M input tokens).
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_vision_model: str = "qwen/qwen2.5-vl-32b-instruct"
 
-    # CSDI
+    # CSDI — real Hong Kong Common Spatial Data Infrastructure endpoints.
     csdi_api_key: str = ""
-    csdi_base_url: str = "https://www.als.gov.hk"
+    csdi_base_url: str = "https://www.als.gov.hk"                       # ALS geocoding
+    csdi_locationsearch_url: str = "https://www.map.gov.hk/gs/api/v1.0.0/locationSearch"
+    # gov.hk certs sometimes ship an incomplete chain — allow opting out of
+    # TLS verification for these specific hosts (defence: only CSDI hosts).
+    csdi_tls_verify: bool = False
 
     # Mapbox — isochrone polygons (CSDI 3D Pedestrian is route-only).
     mapbox_access_token: str = ""
@@ -63,6 +54,8 @@ class Settings(BaseSettings):
     duckdb_path: str = "./data/tochka.duckdb"
     osm_hk_pbf_path: str = "./data/hong-kong-latest.osm.pbf"
     osm_banks_path: str = "./data/osm/banks_atms_hk.json"
+    csdi_pois_path: str = "./data/csdi/csdi_pois.parquet"
+    hk_districts_path: str = "./data/csdi/hk_districts.geojson"
 
     # CORS
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])

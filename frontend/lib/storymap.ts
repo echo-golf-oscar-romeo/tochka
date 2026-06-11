@@ -25,6 +25,15 @@ export interface Layer {
   label?: string | null;
 }
 
+export interface ChartSpec {
+  kind: "bar" | "area" | "donut" | "scatter" | "rank";
+  title: string;
+  subtitle?: string | null;
+  unit?: string | null;
+  data: Array<{ label: string; value: number; value2?: number }>;
+  source?: string | null;
+}
+
 export interface StorymapSection {
   id: string;
   title: string;
@@ -35,6 +44,7 @@ export interface StorymapSection {
   on_exit?: LayerOp[];
   callouts?: string[];
   kpis?: Record<string, string>;
+  charts?: ChartSpec[];
 }
 
 export interface StorymapResult {

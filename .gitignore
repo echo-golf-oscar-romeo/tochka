@@ -32,6 +32,12 @@ data/*
 !data/kontur/
 data/kontur/*
 !data/kontur/kontur_pop_hk.parquet
+# Real CSDI / HK gov open data — small enough to commit so the backend
+# boots with genuine Hong Kong POIs + district boundaries.
+!data/csdi/
+data/csdi/*
+!data/csdi/csdi_pois.parquet
+!data/csdi/hk_districts.geojson
 # DuckDB databases anywhere in the tree
 *.duckdb
 *.duckdb.wal

@@ -30,7 +30,9 @@ completeness so we add a `partial` floor when bilingual or unit info is missing.
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -119,29 +121,101 @@ class CSDIClient:
             "validation_status": v_status,
         }
 
-    # --- Stubs for future endpoints ---
+    # --- Location Search (map.gov.hk GeoData Store) ---
 
-    async def location_search(self, query: str,
-                              bbox: tuple[float, float, float, float] | None = None) -> list[dict[str, Any]]:
-        raise NotImplementedError("Wire CSDI Location Search.")
+    async def location_search(self, query: str, n: int = 20) -> list[dict[str, Any]]:
+        """Free-text place / landmark / building search across Hong Kong.
+
+        Backed by the GeoData Store locationSearch API. It returns x/y in the
+        HK1980 Grid (EPSG:2326); we convert to WGS84 lat/lng via DuckDB.
+        Returns [{name, name_zh, address, district, lat, lng}] (best first).
+        """
+        if not query or not query.strip():
+            return []
+        s = get_settings()
+        try:
+            r = await self._client.get(
+                s.csdi_locationsearch_url, params={"q": query.strip()},
+            )
+            r.raise_for_status()
+            rows = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("CSDI locationSearch failed for %r: %s", query, e)
+            return []
+        if not isinstance(rows, list) or not rows:
+            return []
+        rows = rows[: max(1, n)]
+        # Batch-convert EPSG:2326 → WGS84 (lng, lat).
+        from app.clients.ddb import hk1980_to_wgs84  # local import avoids cycle
+        xy = [(row.get("x"), row.get("y")) for row in rows]
+        lnglat = hk1980_to_wgs84([(x, y) for x, y in xy if x is not None and y is not None])
+        out: list[dict[str, Any]] = []
+        for row, (lng, lat) in zip(rows, lnglat, strict=False):
+            if lng is None or lat is None:
+                continue
+            out.append({
+                "name": row.get("nameEN") or row.get("nameZH") or "",
+                "name_zh": row.get("nameZH"),
+                "address": row.get("addressEN") or "",
+                "district": row.get("districtEN"),
+                "lat": lat,
+                "lng": lng,
+            })
+        return out
+
+    # --- Search Nearby (against the loaded CSDI POI table) ---
 
     async def search_nearby(self, lat: float, lng: float,
-                            category: str, radius_m: int = 500) -> list[dict[str, Any]]:
-        raise NotImplementedError("Wire CSDI Search Nearby.")
+                            category: str | None = None,
+                            radius_m: int = 500, limit: int = 50) -> list[dict[str, Any]]:
+        """POIs from the real CSDI iGeoCom dataset within radius_m of a point.
 
-    async def pedestrian_route(self, origin: tuple[float, float],
-                               max_minutes: int = 10) -> dict[str, Any]:
-        """CSDI 3D Pedestrian Route Search.
-
-        This is a *route* endpoint (origin → destination), not an isochrone
-        endpoint. Building an isochrone polygon from it requires sampling
-        many destinations on a grid + alpha-shape — too slow for live demo.
-        We use Mapbox isochrones as the primary; this stub is here for the
-        eventual HK-specific upgrade.
+        Queries the local `csdi_pois` DuckDB table (loaded from the committed
+        parquet) — no live call needed. Optional category filter matches the
+        friendly `category` column (school, medical, transport, …) case-insensitively.
         """
-        raise NotImplementedError("CSDI 3D Pedestrian Route Search is route-only; "
-                                  "isochrone construction requires grid sampling. "
-                                  "Use Mapbox isochrones via app/clients/mapbox.py for now.")
+        from app.clients.ddb import ensure_csdi_pois_loaded, get_duckdb
+        conn = get_duckdb()
+        if not ensure_csdi_pois_loaded(conn):
+            return []
+        where = ["ST_Distance_Spheroid(ST_Point(lat, lng), ST_Point(?, ?)) <= ?"]
+        params: list[Any] = [float(lat), float(lng), int(radius_m)]
+        if category:
+            where.append("LOWER(category) = LOWER(?)")
+            params.append(category)
+        sql = (
+            "SELECT geonameid, name_en, name_zh, class, type, category, lat, lng, "
+            "district_en, address_en, "
+            "ROUND(ST_Distance_Spheroid(ST_Point(lat, lng), ST_Point(?, ?)), 1) AS distance_m "
+            "FROM csdi_pois WHERE " + " AND ".join(where) +
+            " ORDER BY distance_m LIMIT ?"
+        )
+        params = [float(lat), float(lng)] + params + [int(limit)]
+        try:
+            rs = conn.execute(sql, params)
+            cols = [d[0] for d in rs.description]
+            return [dict(zip(cols, row, strict=False)) for row in rs.fetchall()]
+        except Exception as e:  # noqa: BLE001
+            log.warning("CSDI search_nearby failed: %s", e)
+            return []
+
+    # --- District boundaries (committed GeoJSON) ---
+
+    def district_boundaries(self) -> dict[str, Any]:
+        """Return the 18 HK District Council district boundaries as a GeoJSON
+        FeatureCollection (loaded from the committed file). {} if missing."""
+        s = get_settings()
+        path = Path(s.hk_districts_path)
+        if not path.is_absolute():
+            path = (Path(__file__).resolve().parents[3] / path).resolve()
+        if not path.exists():
+            log.warning("HK districts GeoJSON missing at %s. Run scripts/fetch_csdi.py.", path)
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Failed to read HK districts GeoJSON: %s", e)
+            return {}
 
 
 _singleton: CSDIClient | None = None

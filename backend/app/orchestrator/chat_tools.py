@@ -1164,7 +1164,10 @@ async def maybe_run_tool(*, network: Network, message: str) -> dict[str, Any] | 
     else None — caller falls through to the SQL agent."""
     intent = classify(message)
     if intent is None:
-        return None
+        # No data-fetch / geometry intent — try the advanced-method router
+        # (coverage optimisation, hot-spots, find-similar, whitespace, …).
+        from app.orchestrator.method_tools import maybe_run_method
+        return await maybe_run_method(network=network, message=message)
     log.info("chat tool intent: %s params=%s", intent.kind, intent.params)
     if intent.kind == "osm_fetch":
         return await run_osm_fetch(intent.params["category"], intent.params.get("raw"))

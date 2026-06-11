@@ -42,40 +42,6 @@ export interface ChatResponse {
   } | null;
 }
 
-export interface BeautifyStyle {
-  layer_id: string;
-  paint: Record<string, unknown>;
-}
-
-export interface BeautifyRequest {
-  screenshot: string;
-  styles: BeautifyStyle[];
-  iteration: number;
-  iteration_max: number;
-}
-
-export interface BeautifyUpdate {
-  layer_id: string;
-  paint: Record<string, unknown>;
-}
-
-export interface BeautifyResponse {
-  notes: string;
-  updates: BeautifyUpdate[];
-  provider: string | null;
-  error: string | null;
-}
-
-export async function beautifyOnce(req: BeautifyRequest): Promise<BeautifyResponse> {
-  const r = await fetch(`${API_BASE}/beautify`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  if (!r.ok) throw new Error(`beautify failed: ${r.status} ${await r.text()}`);
-  return r.json();
-}
-
 export async function chatAsk(storymapId: string, message: string): Promise<ChatResponse> {
   const r = await fetch(`${API_BASE}/chat/${storymapId}`, {
     method: "POST",

@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 _conn: duckdb.DuckDBPyConnection | None = None
 _osm_loaded: bool = False
 _kontur_loaded: bool = False
+_csdi_loaded: bool = False
 
 
 def get_duckdb() -> duckdb.DuckDBPyConnection:
@@ -45,12 +46,13 @@ def get_duckdb() -> duckdb.DuckDBPyConnection:
 
 
 def close_duckdb() -> None:
-    global _conn, _osm_loaded, _kontur_loaded
+    global _conn, _osm_loaded, _kontur_loaded, _csdi_loaded
     if _conn is not None:
         _conn.close()
         _conn = None
         _osm_loaded = False
         _kontur_loaded = False
+        _csdi_loaded = False
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +105,62 @@ def ensure_osm_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
     log.info("Loaded %d OSM POIs into DuckDB.", n)
     _osm_loaded = True
     return True
+
+
+# ---------------------------------------------------------------------------
+# CSDI POI loader (real Hong Kong iGeoCom dataset, 37k official POIs)
+# ---------------------------------------------------------------------------
+
+def _csdi_pois_path() -> Path:
+    return (Path(__file__).resolve().parents[3] / "data" / "csdi" / "csdi_pois.parquet").resolve()
+
+
+def ensure_csdi_pois_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
+    """Load the real CSDI iGeoCom POIs into a `csdi_pois` table. Idempotent.
+
+    Columns: geonameid, name_en, name_zh, class, type, category, lat, lng,
+    district_en, address_en. Returns True when populated, False if the
+    parquet is missing (run scripts/fetch_csdi.py).
+    """
+    global _csdi_loaded
+    if _csdi_loaded:
+        return True
+    conn = conn or get_duckdb()
+    path = _csdi_pois_path()
+    if not path.exists():
+        log.warning("CSDI POIs parquet missing at %s. Run scripts/fetch_csdi.py.", path)
+        return False
+    conn.execute("DROP TABLE IF EXISTS csdi_pois;")
+    conn.execute("CREATE TABLE csdi_pois AS SELECT * FROM read_parquet(?)", [str(path)])
+    n = conn.execute("SELECT COUNT(*) FROM csdi_pois").fetchone()[0]
+    log.info("Loaded %d CSDI POIs into DuckDB.", n)
+    _csdi_loaded = True
+    return True
+
+
+def hk1980_to_wgs84(points: list[tuple[float, float]],
+                    conn: duckdb.DuckDBPyConnection | None = None) -> list[tuple[float, float]]:
+    """Batch-convert HK1980 Grid (EPSG:2326) easting/northing → (lng, lat) WGS84.
+
+    CSDI's locationSearch returns x/y in EPSG:2326; this uses DuckDB-spatial's
+    ST_Transform with always_xy so we don't need a separate pyproj dependency.
+    Returns [(lng, lat), ...] in the same order; (None, None) for bad rows.
+    """
+    if not points:
+        return []
+    conn = conn or get_duckdb()
+    out: list[tuple[float, float]] = []
+    for x, y in points:
+        try:
+            r = conn.execute(
+                "SELECT ST_X(p), ST_Y(p) FROM (SELECT ST_Transform("
+                "ST_Point(?, ?), 'EPSG:2326', 'EPSG:4326', true) AS p)",
+                [float(x), float(y)],
+            ).fetchone()
+            out.append((r[0], r[1]))
+        except Exception:  # noqa: BLE001
+            out.append((None, None))
+    return out
 
 
 # ---------------------------------------------------------------------------

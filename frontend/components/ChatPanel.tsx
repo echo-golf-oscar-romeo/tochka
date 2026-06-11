@@ -36,6 +36,10 @@ interface Props {
   /** Callback for a pre-built layer payload returned by the chat tool
    *  router (OSM fetch / Mapbox isochrone / H3 aggregate). */
   onAddPrebuiltLayer?: (layer: NonNullable<ChatResponse["layer"]>) => void;
+  /** When set, the panel sends this prompt as if the user typed it (used by
+   *  the post-upload question flow), then calls onInjectedPromptSent. */
+  injectedPrompt?: string | null;
+  onInjectedPromptSent?: () => void;
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -46,6 +50,7 @@ const DEFAULT_SUGGESTIONS = [
 
 export default function ChatPanel({
   storymapId, networkId, suggestions, layerNames, onAddPointsToMap, onAddPrebuiltLayer,
+  injectedPrompt, onInjectedPromptSent,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -70,6 +75,14 @@ export default function ChatPanel({
     setInput("");
     autoAddedRef.current.clear();
   }, [networkId]);
+
+  // Fire a prompt injected by the parent (post-upload question flow).
+  useEffect(() => {
+    if (!injectedPrompt || busy || !handleId) return;
+    onInjectedPromptSent?.();
+    void send(injectedPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectedPrompt, busy, handleId]);
 
   // Auto-add: every assistant message with geo rows becomes a real map layer.
   // This is THE prompt-based-GIS interaction — chat drives the map.

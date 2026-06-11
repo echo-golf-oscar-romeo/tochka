@@ -24,19 +24,21 @@ export default function AboutPage() {
             <li><strong>Diagnose</strong> — how the existing network performs against catchment population and competitive pressure.</li>
             <li><strong>Expand</strong> — where to open next, ranked by uncovered demand.</li>
             <li><strong>Rationalise</strong> — which locations to close, merge, or resize.</li>
-            <li><strong>Ask the data</strong> — natural-language spatial SQL over the loaded network and the HK competitor table.</li>
-            <li><strong>Beautify</strong> — a vision LLM looks at the rendered map and iteratively restyles it.</li>
+            <li><strong>Ask the data</strong> — natural-language spatial SQL over the loaded network, the HK competitor table, and 37k official CSDI POIs.</li>
+            <li><strong>Optimise</strong> — p-median / LSCP / MCLP coverage optimisation, whitespace gaps, best-new-site ranking.</li>
+            <li><strong>Explain</strong> — LISA hot spots, look-alike similarity search, drivers regression, and a designed report with charts and recommendations.</li>
           </ul>
         </Section>
 
         <Section title="Under the hood">
           <p>
-            FastAPI + DuckDB-spatial for the analysis layer. MapLibre GL for the
-            canvas. Qwen / DeepSeek / Qwen-VL-via-OpenRouter for the agentic
+            FastAPI + DuckDB-spatial for the analysis layer, with PuLP/CBC for
+            coverage optimisation and scikit-learn for embeddings and drivers.
+            MapLibre GL for the canvas. Qwen / DeepSeek for the agentic
             reasoning. Mapbox for walking isochrones. OpenStreetMap for the
-            ~1,300 HK bank and ATM locations that anchor competitor analysis.
-            CSDI Address Lookup Service for geocoding addresses that arrive
-            without coordinates.
+            ~1,300 HK bank and ATM locations; CSDI iGeoCom for 37k official
+            POIs; Kontur for the H3 population grid; CSDI Address Lookup
+            Service for geocoding addresses that arrive without coordinates.
           </p>
         </Section>
 
@@ -50,11 +52,11 @@ export default function AboutPage() {
 
         <Section title="Honest scope">
           <p>
-            Some pieces aren&apos;t real yet: the population grid is canned
-            until CSDI&apos;s Population Distribution FSDT is wired in; the
-            beautify agent falls back to a hand-rolled style nudge when no
-            vision API key is configured; per-task agentic planning is on the
-            roadmap but currently the tool sequence is hard-coded.
+            Some pieces remain pragmatic: the Kontur population grid stands in
+            for CSDI&apos;s Population Distribution FSDT; coverage optimisation
+            time-boxes the CBC solver and falls back to a greedy heuristic on
+            big inputs; per-task agentic planning is on the roadmap but the
+            workflow tool sequence is currently deterministic.
           </p>
         </Section>
 
