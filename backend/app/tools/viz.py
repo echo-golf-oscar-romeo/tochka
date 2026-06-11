@@ -11,7 +11,7 @@ from typing import Any
 
 from app.models.analysis import AnalysisRequest
 from app.models.network import Network
-from app.models.storymap import Layer, MapLocation, StorymapResult, StorymapSection
+from app.models.storymap import ChartSpec, Layer, MapLocation, StorymapResult, StorymapSection
 
 # tochka palette — round 5.
 # Primary purple is reserved for the user's own network. The 8-colour
@@ -221,6 +221,7 @@ async def compose_storymap(
     total_pop = population.get("total_population", 0)
     n_loc = len(network.locations)
     n_comp = len(competitors)
+    charts = _build_section_charts(scores, competitors)
 
     sections = [
         StorymapSection(
@@ -233,6 +234,7 @@ async def compose_storymap(
             location=map_loc,
             on_enter=[{"layer": "user-network", "opacity": 1.0}],
             kpis={"Locations": str(n_loc), "Districts": str(len({loc.raw_fields.get("district", "?") for loc in network.locations}))},
+            charts=charts.get("network-glance", []),
         ),
         StorymapSection(
             id="who-you-reach",
@@ -246,6 +248,7 @@ async def compose_storymap(
             on_enter=[{"layer": "isochrones", "opacity": 0.6},
                       {"layer": "competitors", "opacity": 1.0}],
             kpis={"Population in catchment": f"{total_pop:,}", "Competitors nearby": str(n_comp)},
+            charts=charts.get("who-you-reach", []),
         ),
         StorymapSection(
             id="whats-working",
@@ -257,6 +260,7 @@ async def compose_storymap(
             location=map_loc,
             on_enter=[{"layer": "anomalies-under", "opacity": 1.0}],
             callouts=[a.get("rationale", "") for a in anomalies[:3]],
+            charts=charts.get("whats-working", []),
         ),
         StorymapSection(
             id="opportunity",
@@ -267,8 +271,7 @@ async def compose_storymap(
             ),
             location=map_loc,
             on_enter=[{"layer": "user-network", "opacity": 0.4}],
-            # TODO: add opportunity hex layer in a follow-up tool call once `h3_aggregate`
-            # is wired to real population data.
+            charts=charts.get("opportunity", []),
         ),
         StorymapSection(
             id="next-steps",
@@ -292,3 +295,105 @@ async def compose_storymap(
             f"and the {', '.join(a.value for a in request.archetypes)} archetype(s)."
         ),
     )
+
+
+def _build_section_charts(scores: list[dict], competitors: list[dict]) -> dict[str, list[ChartSpec]]:
+    """Deterministic per-section chart data from the Huff/competitor outputs.
+
+    Chart-selection follows SKILL_report.md: bar for entity comparison,
+    scatter for actual-vs-expected, rank for ordered shortlists, donut for
+    share-of-whole. Every spec carries its data source. Defensive against
+    missing keys — a section simply gets fewer charts."""
+    out: dict[str, list[ChartSpec]] = {}
+
+    def _num(row: dict, key: str) -> float | None:
+        v = row.get(key)
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    rows = [r for r in (scores or []) if r.get("name")]
+
+    # who-you-reach: catchment population per branch (top 8, sorted desc).
+    pops = [(r["name"], _num(r, "catchment_pop")) for r in rows]
+    pops = [(n, v) for n, v in pops if v is not None and v > 0]
+    if len(pops) >= 3:
+        pops.sort(key=lambda t: t[1], reverse=True)
+        out.setdefault("who-you-reach", []).append(ChartSpec(
+            kind="bar",
+            title="Where your catchments hold the most residents",
+            unit="residents",
+            data=[{"label": n, "value": round(v)} for n, v in pops[:8]],
+            source="Kontur population · 10-min walking catchments",
+        ))
+
+    # whats-working: actual vs expected scatter + lowest Huff shares rank.
+    sc = [(r["name"], _num(r, "expected_demand"), _num(r, "actual_volume")) for r in rows]
+    sc = [(n, x, y) for n, x, y in sc if x is not None and y is not None]
+    if len(sc) >= 4:
+        out.setdefault("whats-working", []).append(ChartSpec(
+            kind="scatter",
+            title="Who beats their context — actual vs expected demand",
+            subtitle="Above the diagonal = over-performing",
+            data=[{"label": n, "value": round(x), "value2": round(y)} for n, x, y in sc],
+            source="Huff model · network MIS",
+        ))
+    shares = [(r["name"], _num(r, "share")) for r in rows]
+    shares = [(n, v) for n, v in shares if v is not None]
+    if len(shares) >= 3:
+        shares.sort(key=lambda t: t[1])
+        out.setdefault("whats-working", []).append(ChartSpec(
+            kind="rank",
+            title="Weakest market shares need attention first",
+            unit="%",
+            data=[{"label": n, "value": round(v * 100, 1)} for n, v in shares[:5]],
+            source="Huff share model",
+        ))
+
+    # who-you-reach extra: competitor share of brands (donut, top 5 + other).
+    brands: dict[str, int] = {}
+    for c in competitors or []:
+        b = (c.get("brand") or "other").strip() or "other"
+        brands[b] = brands.get(b, 0) + 1
+    if sum(brands.values()) >= 5:
+        top = sorted(brands.items(), key=lambda t: t[1], reverse=True)
+        head, tail = top[:5], top[5:]
+        data = [{"label": b, "value": v} for b, v in head]
+        if tail:
+            data.append({"label": "other", "value": sum(v for _, v in tail)})
+        out.setdefault("who-you-reach", []).append(ChartSpec(
+            kind="donut",
+            title="Who you compete with nearby",
+            unit="branches",
+            data=data,
+            source="OpenStreetMap competitor banks",
+        ))
+
+    # opportunity: most contested catchments (bar of competitor counts).
+    comps = [(r["name"], _num(r, "comp_count")) for r in rows]
+    comps = [(n, v) for n, v in comps if v is not None]
+    if len(comps) >= 3:
+        comps.sort(key=lambda t: t[1], reverse=True)
+        out.setdefault("opportunity", []).append(ChartSpec(
+            kind="bar",
+            title="The most contested catchments",
+            unit="competitors within 500 m",
+            data=[{"label": n, "value": round(v)} for n, v in comps[:8]],
+            source="OpenStreetMap · CSDI",
+        ))
+
+    # network-glance: recorded volume by branch when available.
+    vols = [(r["name"], _num(r, "actual_volume")) for r in rows]
+    vols = [(n, v) for n, v in vols if v is not None and v > 0]
+    if len(vols) >= 3:
+        vols.sort(key=lambda t: t[1], reverse=True)
+        out.setdefault("network-glance", []).append(ChartSpec(
+            kind="bar",
+            title="Your largest branches by recorded volume",
+            unit="visits",
+            data=[{"label": n, "value": round(v)} for n, v in vols[:8]],
+            source="Uploaded network MIS",
+        ))
+
+    return out

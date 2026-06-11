@@ -10,6 +10,7 @@ even if WiFi drops or the provider's endpoint is misbehaving on the day.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from app.clients.llm import get_llm
 from app.models.network import Network
@@ -20,6 +21,40 @@ from app.orchestrator.prompts import (
 )
 
 log = logging.getLogger(__name__)
+
+_REPORT_SKILL_PATH = Path(__file__).resolve().parent / "SKILL_report.md"
+_REPORT_SKILL: str | None = None
+
+
+def _report_skill() -> str:
+    global _REPORT_SKILL
+    if _REPORT_SKILL is None:
+        try:
+            _REPORT_SKILL = _REPORT_SKILL_PATH.read_text(encoding="utf-8")
+        except OSError:
+            _REPORT_SKILL = ""
+    return _REPORT_SKILL
+
+
+# The analytical arsenal the methodology narrator can draw on. Kept here (not
+# in prompts.py) so it stays in sync with what app/tools actually implements.
+METHOD_ARSENAL = """\
+Available analytical methods (all implemented, deterministic):
+- Catchments: Mapbox walking/driving isochrones; metric buffers (ST_Buffer via EPSG:3857).
+- Demand: Kontur population on H3 r8 hexes; CSDI iGeoCom POIs (37k, by category);
+  competitor banks/ATMs from OSM; on-demand OSM fetch for any category.
+- Gravity & decay: Huff share matrices with exponential / gaussian / power /
+  linear distance-decay kernels.
+- Coverage optimisation: p-median (min weighted distance), LSCP (fewest sites
+  to cover all demand), MCLP (max demand covered with P sites), nearest-
+  facility location-allocation — PuLP/CBC MILPs with greedy fallbacks.
+- Spatial statistics: global Moran's I, local Moran (LISA hot/cold clusters),
+  Getis-Ord Gi* hot spots, IDW interpolation, 2SFCA accessibility.
+- Site selection: multi-criteria suitability ranking (weighted overlay),
+  best-new-point by marginal net-new coverage, whitespace gap detection.
+- Look-alikes: per-location spatial-context embeddings (population,
+  competition, CSDI POI mix, centrality) → cosine similarity, KMeans
+  segmentation, drivers regression with over/under-performance residuals."""
 
 
 def _network_summary(network: Network) -> str:
@@ -86,7 +121,8 @@ async def llm_plan(
         f"You are designing a Hong Kong location-intelligence methodology for "
         f"the archetype(s): {', '.join(archetypes)}.\n\n"
         f"Network summary: {summary}.\n\n"
-        f"Available deterministic tools (in roughly the order I'll call them):\n"
+        f"{METHOD_ARSENAL}\n\n"
+        f"Deterministic tools queued for THIS run (in roughly the order I'll call them):\n"
         f"  {', '.join(tool_names)}\n\n"
         f"Write the methodology as a short, executive-readable plan:\n"
         f"  • Lead with ONE sentence stating the headline output (what the user "
@@ -123,9 +159,13 @@ async def llm_narrate(
     llm = get_llm()
     if not llm.has_key:
         return None
+    system = SYSTEM_ORCHESTRATOR
+    skill = _report_skill()
+    if skill:
+        system += "\n\n" + skill
     text = await llm.chat(
         messages=[
-            {"role": "system", "content": SYSTEM_ORCHESTRATOR},
+            {"role": "system", "content": system},
             {"role": "user", "content": NARRATIVE_USER_PROMPT.format(
                 section_id=section_id,
                 section_title=section_title,
