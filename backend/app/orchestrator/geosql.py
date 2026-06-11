@@ -23,7 +23,13 @@ from typing import Any
 
 import json as _json
 
-from app.clients.ddb import ensure_kontur_loaded, ensure_osm_loaded, get_duckdb, register_locations
+from app.clients.ddb import (
+    ensure_csdi_pois_loaded,
+    ensure_kontur_loaded,
+    ensure_osm_loaded,
+    get_duckdb,
+    register_locations,
+)
 from app.clients.llm import get_llm
 from app.models.network import Network
 from app.orchestrator.chat_tools import maybe_run_tool
@@ -147,6 +153,7 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
         conn = get_duckdb()
         ensure_osm_loaded(conn)
         ensure_kontur_loaded(conn)
+        ensure_csdi_pois_loaded(conn)
         register_locations(conn, network.locations)
     except Exception as e:
         log.warning("Failed to prep DuckDB tables for chat: %s", e)
