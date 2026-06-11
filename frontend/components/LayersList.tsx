@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Eye, EyeOff, GripVertical, Trash2 } from "lucide-react";
 import type { Layer as StoryLayer } from "@/lib/storymap";
 
 interface Props {
@@ -8,8 +9,9 @@ interface Props {
   visibility: Record<string, boolean>;
   onToggle: (layerId: string, visible: boolean) => void;
   onRemove?: (layerId: string) => void;
-  /** Re-order callback. `nextOrder` is the new array of layer ids,
-   *  top-of-list first. */
+  /** Called with the full id list in its new order after a drag. Following
+   *  the Figma/Mapbox-Studio convention, the FIRST id in the list renders
+   *  on TOP of the map stack (MapCanvas.applyOrder enforces this). */
   onReorder?: (nextOrder: string[]) => void;
 }
 
@@ -22,7 +24,6 @@ const LAYER_LABELS: Record<string, string> = {
   "opportunity": "Opportunity hexes",
 };
 
-
 function deriveLabel(layer: StoryLayer): string {
   if (layer.label) return layer.label;
   if (LAYER_LABELS[layer.id]) return LAYER_LABELS[layer.id];
@@ -33,30 +34,31 @@ function deriveLabel(layer: StoryLayer): string {
 export default function LayersList({ layers, visibility, onToggle, onRemove, onReorder }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  // Avoid re-firing onReorder for no-op rearrangements.
-  const lastEmitted = useRef<string>("");
+  const orderRef = useRef<string[]>([]);
+  orderRef.current = layers.map((l) => l.id);
 
   if (layers.length === 0) {
     return (
       <p className="text-xs text-muted px-1 py-2">
-        Layers appear here as workflows produce them. Toggle to hide / show. Remove to free the canvas. Drag to reorder.
+        Layers appear here as analyses run. Toggle the eye to hide, drag the
+        grip to restack, trash to remove.
       </p>
     );
   }
 
-  function reorder(from: string, to: string) {
-    if (!onReorder || from === to) return;
-    const ids = layers.map((l) => l.id);
-    const fromIdx = ids.indexOf(from);
-    const toIdx = ids.indexOf(to);
-    if (fromIdx === -1 || toIdx === -1) return;
-    const next = ids.slice();
-    next.splice(fromIdx, 1);
-    next.splice(toIdx, 0, from);
-    const key = next.join("|");
-    if (key === lastEmitted.current) return;
-    lastEmitted.current = key;
-    onReorder(next);
+  function handleDrop(targetId: string) {
+    if (!onReorder || !dragId || dragId === targetId) {
+      setDragId(null); setOverId(null);
+      return;
+    }
+    const order = [...orderRef.current];
+    const from = order.indexOf(dragId);
+    const to = order.indexOf(targetId);
+    if (from === -1 || to === -1) { setDragId(null); setOverId(null); return; }
+    order.splice(from, 1);
+    order.splice(to, 0, dragId);
+    onReorder(order);
+    setDragId(null); setOverId(null);
   }
 
   return (
@@ -67,7 +69,7 @@ export default function LayersList({ layers, visibility, onToggle, onRemove, onR
         const label = deriveLabel(layer);
         const swatch = layerSwatch(layer);
         const isDragging = dragId === layer.id;
-        const isDropTarget = overId === layer.id && dragId !== null && dragId !== layer.id;
+        const isOver = overId === layer.id && dragId !== layer.id;
         return (
           <li
             key={layer.id}
@@ -75,75 +77,63 @@ export default function LayersList({ layers, visibility, onToggle, onRemove, onR
             onDragStart={(e) => {
               setDragId(layer.id);
               e.dataTransfer.effectAllowed = "move";
-              try { e.dataTransfer.setData("text/plain", layer.id); } catch { /* ignore */ }
             }}
-            onDragOver={(e) => {
-              if (!dragId) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              if (overId !== layer.id) setOverId(layer.id);
-            }}
-            onDragLeave={() => {
-              if (overId === layer.id) setOverId(null);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (dragId) reorder(dragId, layer.id);
-              setDragId(null);
-              setOverId(null);
-            }}
+            onDragOver={(e) => { e.preventDefault(); setOverId(layer.id); }}
+            onDragLeave={() => setOverId((cur) => (cur === layer.id ? null : cur))}
+            onDrop={(e) => { e.preventDefault(); handleDrop(layer.id); }}
             onDragEnd={() => { setDragId(null); setOverId(null); }}
-            className={`group flex items-center gap-2 py-1.5 px-1.5 rounded hover:bg-rule transition ${
-              isDragging ? "opacity-40" : ""
-            } ${
-              isDropTarget ? "ring-1 ring-accent-400 ring-inset bg-accent-50" : ""
-            }`}
+            className={`group flex items-center gap-1.5 py-1.5 px-1.5 rounded-md transition-all duration-150 ${
+              isDragging ? "opacity-40 scale-[0.98]" : "hover:bg-rule"
+            } ${isOver ? "ring-1 ring-accent-400 bg-accent-50" : ""}`}
           >
             {onReorder && (
               <span
-                className="cursor-grab active:cursor-grabbing text-subtle hover:text-ink select-none shrink-0 px-1"
+                className="text-subtle opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity shrink-0"
                 aria-hidden
-                title="Drag to reorder"
               >
-                <DragIcon />
+                <GripVertical size={13} />
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => onToggle(layer.id, !visible)}
-              aria-pressed={visible}
-              className="flex items-center gap-2 flex-1 text-left min-w-0"
+            <span
+              className={`inline-block h-3 w-3 rounded-sm border shrink-0 transition-opacity duration-200 ${
+                visible ? "" : "opacity-25"
+              }`}
+              style={{ background: swatch.fill, borderColor: swatch.stroke }}
+              aria-hidden
+            />
+            <span
+              className={`text-sm truncate flex-1 min-w-0 transition-colors duration-200 ${
+                visible ? "text-ink" : "text-subtle"
+              }`}
+              title={label}
             >
-              <span
-                className={`inline-block h-3 w-3 rounded-sm border shrink-0 ${
-                  visible ? "" : "opacity-30"
-                }`}
-                style={{ background: swatch.fill, borderColor: swatch.stroke }}
-                aria-hidden
-              />
-              <span className={`text-sm truncate ${visible ? "text-ink" : "text-subtle line-through"}`}>
-                {label}
-              </span>
-              <span className="text-[11px] text-muted shrink-0">{count}</span>
-            </button>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+              {label}
+            </span>
+            <span className="text-[11px] text-muted shrink-0 tabular-nums">{count}</span>
+            <div className="flex items-center gap-0.5 shrink-0">
               <button
                 type="button"
                 onClick={() => onToggle(layer.id, !visible)}
-                className="text-[10px] text-muted hover:text-ink px-1.5 py-0.5 rounded"
+                aria-pressed={visible}
+                aria-label={visible ? `Hide ${label}` : `Show ${label}`}
                 title={visible ? "Hide layer" : "Show layer"}
+                className={`p-1 rounded-md transition-colors ${
+                  visible
+                    ? "text-muted hover:text-ink hover:bg-border/60"
+                    : "text-subtle hover:text-ink hover:bg-border/60"
+                }`}
               >
-                {visible ? "hide" : "show"}
+                {visible ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
               {onRemove && (
                 <button
                   type="button"
                   onClick={() => onRemove(layer.id)}
-                  className="text-muted hover:text-accent-700 transition rounded px-1.5 py-0.5"
-                  title="Remove layer"
                   aria-label={`Remove ${label}`}
+                  title="Remove layer"
+                  className="p-1 rounded-md text-subtle opacity-0 group-hover:opacity-100 hover:text-highlight-600 hover:bg-highlight-50 transition-all"
                 >
-                  <TrashIcon />
+                  <Trash2 size={13} />
                 </button>
               )}
             </div>
@@ -151,28 +141,6 @@ export default function LayersList({ layers, visibility, onToggle, onRemove, onR
         );
       })}
     </ul>
-  );
-}
-
-
-function DragIcon() {
-  return (
-    <svg width="9" height="14" viewBox="0 0 8 14" fill="currentColor" aria-hidden>
-      <circle cx="1.5" cy="2"  r="1" />
-      <circle cx="6.5" cy="2"  r="1" />
-      <circle cx="1.5" cy="7"  r="1" />
-      <circle cx="6.5" cy="7"  r="1" />
-      <circle cx="1.5" cy="12" r="1" />
-      <circle cx="6.5" cy="12" r="1" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
-      <path d="M3 4h10M6 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M5 4l.6 9.1a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4L11 4M7 7v4M9 7v4" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
   );
 }
 
@@ -186,10 +154,9 @@ function featureCount(layer: StoryLayer): string {
 
 function layerSwatch(layer: StoryLayer): { fill: string; stroke: string } {
   const paint = (layer.paint ?? {}) as Record<string, unknown>;
-  const fill =
-    (paint["fill-color"] as string) ??
-    (paint["circle-color"] as string) ??
-    (paint["line-color"] as string) ??
-    "#0a0a0a";
-  return { fill, stroke: "rgba(0,0,0,0.2)" };
+  const raw =
+    paint["fill-color"] ?? paint["circle-color"] ?? paint["line-color"] ?? "#0A0903";
+  // Data-driven paint (interpolate/match arrays) → neutral multi swatch.
+  const fill = typeof raw === "string" ? raw : "conic-gradient(from 0deg, #FAD037, #FB3640, #C637FA, #37B2FA, #FAD037)";
+  return { fill, stroke: "rgba(10,9,3,0.2)" };
 }

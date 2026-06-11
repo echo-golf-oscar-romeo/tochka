@@ -1,23 +1,19 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChatPanel from "./ChatPanel";
 import Header from "./Header";
 import MapCanvas, { type MapCanvasHandle } from "./MapCanvas";
 import MethodologyPopover, { type Plan } from "./MethodologyPopover";
+import QuestionFlow from "./QuestionFlow";
+import ReportPanel from "./ReportPanel";
 import UploadDialog from "./UploadDialog";
 import WorkspacePanel, { type Workflow } from "./WorkspacePanel";
-import { analyzeStream, beautifyOnce, fetchStorymap, uploadCsv, type UploadResponse } from "@/lib/api";
-import type { Layer as StoryLayer } from "@/lib/storymap";
+import { analyzeStream, fetchStorymap, uploadCsv, type UploadResponse } from "@/lib/api";
+import { deleteReport, listReports, saveReport, type SavedReport } from "@/lib/reports";
+import type { Layer as StoryLayer, StorymapResult } from "@/lib/storymap";
 
 type AgentEvent = { kind: string; payload: Record<string, unknown> };
-
-interface BeautifyLog {
-  iteration: number;
-  notes: string;
-  provider?: string;
-}
 
 const ARCHETYPE_BY_WORKFLOW: Record<Workflow, ("diagnose" | "expand" | "rationalise")[]> = {
   diagnose: ["diagnose"],
@@ -33,7 +29,6 @@ const LAYER_PALETTE = [
 ];
 
 export default function MapWorkspace() {
-  const router = useRouter();
   const mapHandleRef = useRef<MapCanvasHandle | null>(null);
 
   const [network, setNetwork] = useState<UploadResponse | null>(null);
@@ -43,9 +38,17 @@ export default function MapWorkspace() {
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [busy, setBusy] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [beautifying, setBeautifying] = useState(false);
-  const [beautifyLog, setBeautifyLog] = useState<BeautifyLog[]>([]);
   const [storymapId, setStorymapId] = useState<string | null>(null);
+
+  // Post-upload question flow + chat prompt injection.
+  const [showQuestionFlow, setShowQuestionFlow] = useState(false);
+  const [chatInject, setChatInject] = useState<string | null>(null);
+
+  // Report window + saved reports.
+  const [reportSpec, setReportSpec] = useState<StorymapResult | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  useEffect(() => setSavedReports(listReports()), []);
 
   // Methodology popover state: filled in by plan_narrative / tool_* events.
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -58,13 +61,17 @@ export default function MapWorkspace() {
     setNetwork(net);
     setStorymapId(null);
     setEvents([]);
-    setBeautifyLog([]);
     setShowUpload(false);
+    setReportOpen(false);
+    setReportSpec(null);
 
     // Pre-render the user network so points appear immediately.
     const preLayer = buildUserNetworkLayer(net);
     setLayers([preLayer]);
     setLayerVisibility({ [preLayer.id]: true });
+
+    // Ask what the user wants to find out — the conversation starter.
+    setShowQuestionFlow(true);
   }, []);
 
   // ----- Run a workflow -----
@@ -145,47 +152,6 @@ export default function MapWorkspace() {
       setCurrentTool(null);
     }
   }, [network, busy]);
-
-  // ----- Beautify loop -----
-  const handleBeautify = useCallback(async () => {
-    if (!mapHandleRef.current || busy || beautifying) return;
-    const iterationMax = 3;
-    setBeautifying(true);
-    setBeautifyLog([]);
-    try {
-      let currentStyles = layers.map((l) => ({
-        layer_id: l.id,
-        paint: (l.paint ?? {}) as Record<string, unknown>,
-      }));
-      for (let iter = 1; iter <= iterationMax; iter++) {
-        const screenshot = mapHandleRef.current.screenshot();
-        if (!screenshot) break;
-        const result = await beautifyOnce({
-          screenshot,
-          styles: currentStyles,
-          iteration: iter,
-          iteration_max: iterationMax,
-        });
-        setBeautifyLog((prev) => [...prev, {
-          iteration: iter,
-          notes: result.notes,
-          provider: result.provider ?? undefined,
-        }]);
-        if (!result.updates || result.updates.length === 0) break;
-        mapHandleRef.current.applyPaintUpdates(result.updates);
-        currentStyles = currentStyles.map((s) => {
-          const u = result.updates.find((x) => x.layer_id === s.layer_id);
-          if (!u) return s;
-          return { ...s, paint: { ...(s.paint as Record<string, unknown>), ...u.paint } };
-        });
-        await new Promise((r) => setTimeout(r, 600));
-      }
-    } catch (e) {
-      console.error("beautify failed:", e);
-    } finally {
-      setBeautifying(false);
-    }
-  }, [busy, beautifying, layers]);
 
   // ----- Layer toggle / remove -----
   const handleToggleLayer = useCallback((id: string, visible: boolean) => {
@@ -278,16 +244,45 @@ export default function MapWorkspace() {
     setLayerVisibility((prev) => ({ ...prev, [layer.id]: true }));
   }, []);
 
-  // ----- Storymap -----
-  const handleOpenStorymap = useCallback(async () => {
+  // ----- Report window -----
+  const handleOpenReport = useCallback(async () => {
     if (!storymapId) return;
     try {
-      await fetchStorymap(storymapId);
-      router.push(`/story/${storymapId}`);
+      const spec = await fetchStorymap(storymapId);
+      setReportSpec(spec);
+      setReportOpen(true);
     } catch (e) {
-      console.error("storymap fetch failed:", e);
+      console.error("report fetch failed:", e);
     }
-  }, [storymapId, router]);
+  }, [storymapId]);
+
+  const handleSaveReport = useCallback(() => {
+    if (!reportSpec) return;
+    saveReport(reportSpec);
+    setSavedReports(listReports());
+  }, [reportSpec]);
+
+  const handleOpenSavedReport = useCallback((id: string) => {
+    const item = listReports().find((r) => r.id === id);
+    if (!item) return;
+    setReportSpec(item.spec);
+    setReportOpen(true);
+  }, []);
+
+  const handleDeleteSavedReport = useCallback((id: string) => {
+    deleteReport(id);
+    setSavedReports(listReports());
+  }, []);
+
+  const reportSaved = useMemo(
+    () => Boolean(reportSpec && savedReports.some((r) => r.id === reportSpec.id)),
+    [reportSpec, savedReports],
+  );
+
+  // QuestionFlow → fire a chat question as if the user typed it.
+  const handleAskChat = useCallback((message: string) => {
+    setChatInject(message);
+  }, []);
 
   // ----- Derived: dataset-aware chat suggestions -----
   const chatSuggestions = useMemo(() => deriveSuggestions(network), [network]);
@@ -296,32 +291,25 @@ export default function MapWorkspace() {
   // Layer labels for the "/" autocomplete in chat.
   const layerNames = useMemo(() => layers.map((l) => l.id), [layers]);
 
-  // Beautify result summary for the panel notice strip.
-  const beautifyNotice = useMemo(() => {
-    if (beautifyLog.length === 0) return null;
-    const last = beautifyLog[beautifyLog.length - 1];
-    return `${last.notes} (${last.provider ?? "vision"})`;
-  }, [beautifyLog]);
   const lastEventLine = useMemo(() => lastInterestingLine(events), [events]);
   const headerStatus = useMemo(() => {
-    if (beautifying) return "Beautifying";
     if (activeWorkflow) return `Running ${activeWorkflow}`;
     if (storymapId) return "Analysis ready";
     if (network) return "Loaded";
     return "Idle";
-  }, [activeWorkflow, beautifying, storymapId, network]);
+  }, [activeWorkflow, storymapId, network]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-canvas text-ink">
       <Header
         status={headerStatus}
         detail={lastEventLine ?? undefined}
-        busy={busy || beautifying}
+        busy={busy}
         activeWorkflow={activeWorkflow}
         onRunWorkflow={handleWorkflow}
         workflowsDisabled={!network || busy}
       />
-      <main className="flex-1 min-h-0 flex">
+      <main className="relative flex-1 min-h-0 flex">
         {/* Left: chat (primary, bigger) */}
         <aside className="w-[28rem] shrink-0 border-r border-border bg-canvas flex flex-col h-full overflow-hidden">
           <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-border">
@@ -339,6 +327,8 @@ export default function MapWorkspace() {
                 layerNames={layerNames}
                 onAddPointsToMap={handleAddPointsToMap}
                 onAddPrebuiltLayer={handleAddPrebuiltLayer}
+                injectedPrompt={chatInject}
+                onInjectedPromptSent={() => setChatInject(null)}
               />
             ) : (
               <div className="px-4 py-4 text-xs text-muted">
@@ -380,31 +370,28 @@ export default function MapWorkspace() {
             />
           )}
 
+          {/* Question flow — the post-upload "what do you want to find out?" */}
+          {showQuestionFlow && network && (
+            <QuestionFlow
+              networkSummary={networkSummary ?? `${network.locations.length} locations`}
+              onRunWorkflow={handleWorkflow}
+              onAskChat={handleAskChat}
+              onDismiss={() => setShowQuestionFlow(false)}
+            />
+          )}
+
           {/* Progress strip */}
-          {(busy || beautifyLog.length > 0) && (
-            <div className="absolute left-4 bottom-4 z-10 max-w-md bg-canvas/95 backdrop-blur rounded shadow-soft border border-border px-3 py-2 text-xs">
+          {busy && (
+            <div className="absolute left-4 bottom-4 z-10 max-w-md liquid-glass rounded-lg px-3 py-2 text-xs">
               <div className="flex items-center gap-2">
-                {busy && (
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent-500 animate-pulse" />
-                )}
-                <span className="text-ink">{lastEventLine ?? "Ready."}</span>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent-500 animate-pulse" />
+                <span className="text-ink">{lastEventLine ?? "Working…"}</span>
               </div>
-              {beautifyLog.length > 0 && (
-                <ul className="mt-2 space-y-0.5 text-[11px] text-muted">
-                  {beautifyLog.map((b) => (
-                    <li key={b.iteration}>
-                      <span className="text-accent-600">·</span> iter {b.iteration}:{" "}
-                      <span className="text-ink/80">{b.notes}</span>
-                      {b.provider && <span className="ml-1 text-[10px]">({b.provider})</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
           )}
         </div>
 
-        {/* Right: layers + outputs */}
+        {/* Right: layers + reports */}
         <WorkspacePanel
           networkId={network?.id ?? null}
           networkSummary={networkSummary}
@@ -415,12 +402,23 @@ export default function MapWorkspace() {
           onToggleLayer={handleToggleLayer}
           onRemoveLayer={handleRemoveLayer}
           onReorderLayers={handleReorderLayers}
-          storymapReady={Boolean(storymapId)}
-          onOpenStorymap={handleOpenStorymap}
-          beautifying={beautifying}
-          onBeautify={handleBeautify}
-          beautifyNotice={beautifyNotice}
+          reportReady={Boolean(storymapId)}
+          onOpenReport={handleOpenReport}
+          savedReports={savedReports.map((r) => ({ id: r.id, title: r.title, createdAt: r.createdAt }))}
+          onOpenSavedReport={handleOpenSavedReport}
+          onDeleteSavedReport={handleDeleteSavedReport}
         />
+
+        {/* Report window — slide-over, expandable to full overlay */}
+        {reportSpec && (
+          <ReportPanel
+            spec={reportSpec}
+            open={reportOpen}
+            saved={reportSaved}
+            onSave={handleSaveReport}
+            onClose={() => setReportOpen(false)}
+          />
+        )}
       </main>
 
       {showUpload && (
