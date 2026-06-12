@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { FileText, Trash2, UploadCloud } from "lucide-react";
+import { FileText, Sparkles, Trash2, UploadCloud } from "lucide-react";
 import LayersList from "./LayersList";
 import type { Layer as StoryLayer } from "@/lib/storymap";
 
@@ -19,8 +19,10 @@ interface Props {
   networkSummary: string | null;
   onUpload: () => void;
 
-  // Busy state (workflows are triggered from the Header / question flow)
+  // Busy state (analyses are triggered from the question flow)
   busy: boolean;
+  /** Reopens the "what would you like to find out?" flow. */
+  onCreateReport: () => void;
 
   // Layers
   layers: StoryLayer[];
@@ -39,30 +41,44 @@ interface Props {
 
 export default function WorkspacePanel(props: Props) {
   const {
-    networkId, networkSummary, onUpload,
+    networkId, networkSummary, onUpload, busy, onCreateReport,
     layers, layerVisibility, onToggleLayer, onRemoveLayer, onReorderLayers,
     reportReady, onOpenReport, savedReports, onOpenSavedReport, onDeleteSavedReport,
   } = props;
 
   return (
     <aside className="w-[22rem] shrink-0 border-l border-border bg-canvas flex flex-col h-full overflow-hidden">
-      {/* Data */}
+      {/* Data + new analysis */}
       <Section title="Data">
-        <button
-          type="button"
-          onClick={onUpload}
-          className="w-full rounded-lg border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-left transition-all duration-200 flex items-start gap-2.5"
-        >
-          <UploadCloud size={16} className="text-accent-500 mt-0.5 shrink-0" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium text-ink">
-              {networkId ? "Replace network" : "Upload network CSV"}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onUpload}
+            className="rounded-lg border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-left transition-all duration-200"
+          >
+            <UploadCloud size={15} className="text-accent-500 mb-1" />
+            <span className="block text-[13px] font-medium text-ink leading-tight">
+              {networkId ? "Replace network" : "Upload CSV"}
             </span>
-            <span className="block text-xs text-muted mt-0.5 truncate">
-              {networkSummary ?? "Drag your locations to start"}
+            <span className="block text-[10px] text-muted mt-0.5 truncate">
+              {networkSummary ?? "Drag locations to start"}
             </span>
-          </span>
-        </button>
+          </button>
+          <button
+            type="button"
+            onClick={onCreateReport}
+            disabled={!networkId || busy}
+            className="rounded-lg border border-border hover:border-accent-400 hover:bg-accent-50 px-3 py-2 text-left transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={15} className="text-accent-500 mb-1" />
+            <span className="block text-[13px] font-medium text-ink leading-tight">
+              New analysis
+            </span>
+            <span className="block text-[10px] text-muted mt-0.5">
+              Ask a question → report
+            </span>
+          </button>
+        </div>
       </Section>
 
       {/* Layers — takes remaining vertical space */}

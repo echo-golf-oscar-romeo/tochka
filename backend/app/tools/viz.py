@@ -200,6 +200,7 @@ async def compose_storymap(
     population: dict[str, Any],
     scores: list[dict],
     anomalies: list[dict],
+    findings: list[tuple[str, str]] | None = None,
 ) -> StorymapResult:
     """Assemble the 5-section storymap from tool outputs.
 
@@ -283,6 +284,22 @@ async def compose_storymap(
             location=map_loc,
         ),
     ]
+
+    # Dynamic-methodology findings (whitespace, coverage optimisation, LISA,
+    # look-alikes, …) get their own section before next-steps, so the report
+    # changes with the methodology rather than always telling one story.
+    if findings:
+        sections.insert(4, StorymapSection(
+            id="method-findings",
+            title="What the methods found",
+            description=(
+                f"The methodology ran {len(findings)} specialised analyses on top of "
+                "the base catchment model. Each finding below is grounded in the "
+                "layers already on your map."
+            ),
+            location=map_loc,
+            callouts=[f"{title}: {text}" for title, text in findings[:5]],
+        ))
 
     return StorymapResult(
         id="pending",  # filled in by the orchestrator

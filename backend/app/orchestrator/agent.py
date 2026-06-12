@@ -17,18 +17,10 @@ from app.clients.llm import get_llm
 from app.config import get_settings
 from app.models.analysis import AnalysisRequest, Archetype, DataLayerPlan
 from app.models.network import Network
+from app.orchestrator import registry
 from app.orchestrator.decision import needs_clarification, pick_methodology
-from app.orchestrator.llm import llm_clarify, llm_narrate, llm_plan
-from app.tools import (
-    competitors,
-    demand,
-    geocoding,
-    modeling,
-    opportunity,
-    rationalisation,
-    reachability,
-    viz,
-)
+from app.orchestrator.llm import llm_clarify, llm_narrate, llm_plan, llm_select_plan
+from app.tools import geocoding, modeling, viz
 
 # Hard-coded fallback question — used when DASHSCOPE_API_KEY is missing or the
 # LLM call fails. Keeps the demo loop runnable offline.
@@ -130,33 +122,36 @@ class Orchestrator:
         )
         yield AgentEvent("plan", {"plan": [p.model_dump() for p in plan]})
 
-        # LLM-narrated plan — what's about to happen, in one sentence,
-        # specific to the chosen archetype(s). Falls back to a hand-rolled
-        # string when the LLM isn't available so the demo still reads as
-        # agentic on stage.
+        # ---- The methodologist designs THIS run's plan --------------------
+        # An LLM picks the analysis steps from the registry catalog, tailored
+        # to the user's question (SKILL_methodology). When the LLM is
+        # unavailable or returns junk, a deterministic archetype+intent plan
+        # takes over — the demo always runs.
         archetype_values = [a.value for a in chosen_archetypes]
-        archetype_tool_map = {
-            "diagnose":    ["isochrone_walk", "competitors_in_radius", "population_in_polygon",
-                            "huff_model", "anomaly_detect"],
-            "expand":      ["isochrone_walk", "competitors_in_radius", "population_in_polygon",
-                            "huff_model", "opportunity_hexes"],
-            "rationalise": ["isochrone_walk", "competitors_in_radius", "huff_model",
-                            "cannibalisation_pairs"],
-        }
-        tool_names = sorted({t for a in archetype_values for t in archetype_tool_map.get(a, [])})
-        narrated_plan = await llm_plan(network, archetypes=archetype_values, tool_names=tool_names)
+        selected = await llm_select_plan(
+            network,
+            archetypes=archetype_values,
+            user_intent=user_intent,
+            catalog=registry.catalog_for_prompt(),
+        )
+        if selected:
+            narrated_plan, raw_steps = selected
+            plan_steps = registry.resolve_plan(raw_steps)
+            plan_source = get_llm().provider
+        else:
+            narrated_plan, plan_steps, plan_source = "", [], "fallback"
+        if not plan_steps:
+            plan_steps = registry.default_plan(archetype_values, user_intent)
         if not narrated_plan:
-            narrated_plan = _fallback_plan_narrative(archetype_values, len(network.locations))
+            narrated_plan = await llm_plan(
+                network, archetypes=archetype_values, tool_names=plan_steps,
+            ) or _fallback_plan_narrative(archetype_values, len(network.locations))
         yield AgentEvent("plan_narrative", {
             "text": narrated_plan,
             "archetypes": archetype_values,
-            "tool_sequence": tool_names,
+            "tool_sequence": plan_steps,
+            "source": plan_source,
         })
-
-        # ===== QWEN-AGENT-HOOK =====
-        # In production, hand `network`, `request`, and the tool registry to
-        # qwen_agent.Assistant and let it pick tools turn by turn. For the
-        # skeleton, run a fixed sequence so the demo and tests are deterministic.
 
         # Emit the user-network layer immediately so the workspace can render
         # uploaded points before any analysis tool runs.
@@ -164,65 +159,35 @@ class Orchestrator:
             "layer": viz.build_user_network_layer(network).model_dump(),
         })
 
-        yield AgentEvent("tool_call", {"tool": "isochrone_walk", "minutes": 10})
-        isos = await reachability.isochrone_walk(network.locations, minutes=10)
-        yield AgentEvent("tool_result", {"tool": "isochrone_walk", "n_polygons": len(isos)})
-        yield AgentEvent("layer_added", {
-            "layer": viz.build_isochrones_layer(isos).model_dump(),
-        })
+        # ---- Execute the plan ---------------------------------------------
+        # Steps stream their layers to the client the moment they complete —
+        # the map fills in live while later steps still run.
+        ctx: dict[str, Any] = {}
+        findings: list[tuple[str, str]] = []
+        for step_name in plan_steps:
+            step = registry.REGISTRY.get(step_name)
+            if step is None or step.run is None:
+                continue
+            yield AgentEvent("tool_call", {"tool": step_name})
+            try:
+                result = await step.run(network, ctx)
+            except Exception as e:  # noqa: BLE001 — one bad step must not kill the run
+                yield AgentEvent("tool_result", {"tool": step_name, "error": str(e)[:200]})
+                continue
+            yield AgentEvent("tool_result", {"tool": step_name, **result.summary})
+            for layer in result.layers:
+                yield AgentEvent("layer_added", {"layer": layer})
+            if result.finding:
+                findings.append(result.finding)
 
-        yield AgentEvent("tool_call", {"tool": "competitors_in_radius", "radius_m": 500})
-        comp = await competitors.competitors_in_radius(network.locations, radius_m=500)
-        yield AgentEvent("tool_result", {"tool": "competitors_in_radius", "n": len(comp)})
-        yield AgentEvent("layer_added", {
-            "layer": viz.build_competitors_layer(comp).model_dump(),
-        })
-
-        yield AgentEvent("tool_call", {"tool": "population_in_polygon"})
-        pop = await demand.population_in_polygon(isos)
-        yield AgentEvent("tool_result", {"tool": "population_in_polygon", "total": pop.get("total_population")})
-
-        yield AgentEvent("tool_call", {"tool": "huff_model"})
-        scores = await modeling.huff_model(network.locations, comp, pop)
-        yield AgentEvent("tool_result", {"tool": "huff_model", "n_scored": len(scores)})
-
-        # ---- Archetype-specific branches ----------------------------------
-        # Each archetype gets its own *additional* tool + layer on top of the
-        # shared base (network, isochrones, competitors, population, huff).
-        archetype_ids = {a.value for a in chosen_archetypes}
-        anomalies: list[dict] = []
-
-        # Diagnose -> anomaly detection on Huff baseline.
-        if "diagnose" in archetype_ids:
-            yield AgentEvent("tool_call", {"tool": "anomaly_detect"})
-            anomalies = await modeling.anomaly_detect(scores)
-            yield AgentEvent("tool_result", {"tool": "anomaly_detect", "outliers": len(anomalies)})
-            yield AgentEvent("layer_added", {
-                "layer": viz.build_anomalies_layer(anomalies, network).model_dump(),
-            })
-
-        # Expand -> opportunity hex grid (uncovered demand).
-        if "expand" in archetype_ids:
-            yield AgentEvent("tool_call", {"tool": "opportunity_hexes", "top_n": 60})
-            opp_cells = await opportunity.opportunity_hexes(network.locations, top_n=60)
-            yield AgentEvent("tool_result", {"tool": "opportunity_hexes", "n_cells": len(opp_cells)})
-            yield AgentEvent("layer_added", {
-                "layer": viz.build_opportunity_layer(opp_cells).model_dump(),
-            })
-
-        # Rationalise -> cannibalisation lines between own-network branches.
-        if "rationalise" in archetype_ids:
-            yield AgentEvent("tool_call", {"tool": "cannibalisation_pairs", "max_distance_m": 800})
-            pairs = await rationalisation.cannibalisation_pairs(network.locations, max_distance_m=800)
-            yield AgentEvent("tool_result", {"tool": "cannibalisation_pairs", "n_pairs": len(pairs)})
-            yield AgentEvent("layer_added", {
-                "layer": viz.build_cannibalisation_layer(pairs).model_dump(),
-            })
-
-        # If anomalies weren't computed for a non-diagnose flow, run a quick
-        # one anyway so the storymap section that talks about anomalies has
-        # real numbers — but skip emitting it as a layer.
-        if not anomalies:
+        isos = ctx.get("isochrones", [])
+        comp = ctx.get("competitors", [])
+        pop = ctx.get("population", {})
+        scores = ctx.get("scores", [])
+        anomalies = ctx.get("anomalies", [])
+        # The performance section reads anomalies — compute quietly when the
+        # plan produced scores but skipped the explicit anomaly step.
+        if scores and not anomalies:
             anomalies = await modeling.anomaly_detect(scores)
 
         # Compose the storymap scaffold (layers + section structure + fallback prose).
@@ -235,6 +200,7 @@ class Orchestrator:
             population=pop,
             scores=scores,
             anomalies=anomalies,
+            findings=findings,
         )
         storymap_id = str(uuid.uuid4())
         storymap.id = storymap_id

@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 
 _REPORT_SKILL_PATH = Path(__file__).resolve().parent / "SKILL_report.md"
 _REPORT_SKILL: str | None = None
+_METHOD_SKILL_PATH = Path(__file__).resolve().parent / "SKILL_methodology.md"
+_METHOD_SKILL: str | None = None
 
 
 def _report_skill() -> str:
@@ -34,6 +36,16 @@ def _report_skill() -> str:
         except OSError:
             _REPORT_SKILL = ""
     return _REPORT_SKILL
+
+
+def _method_skill() -> str:
+    global _METHOD_SKILL
+    if _METHOD_SKILL is None:
+        try:
+            _METHOD_SKILL = _METHOD_SKILL_PATH.read_text(encoding="utf-8")
+        except OSError:
+            _METHOD_SKILL = ""
+    return _METHOD_SKILL
 
 
 # The analytical arsenal the methodology narrator can draw on. Kept here (not
@@ -145,6 +157,59 @@ async def llm_plan(
     if not text:
         return None
     return text.strip()
+
+
+async def llm_select_plan(
+    network: Network,
+    *,
+    archetypes: list[str],
+    user_intent: str | None,
+    catalog: str,
+) -> tuple[str, list[str]] | None:
+    """The methodologist: choose THIS run's analysis steps + narrative.
+
+    Returns (narrative, step_names) or None when the LLM is unavailable or
+    the output can't be parsed — caller falls back to the deterministic
+    default plan. Step names are validated downstream by resolve_plan()."""
+    import json as _json
+    import re as _re
+
+    llm = get_llm()
+    if not llm.has_key:
+        return None
+    prompt = (
+        f"Network: {_network_summary(network)}.\n"
+        f"Analytical archetype(s): {', '.join(archetypes) or 'unspecified'}.\n"
+        f"The user's question (verbatim): {user_intent or '(none — general review)'}\n\n"
+        f"## Step catalog\n{catalog}\n\n"
+        "Design the methodology for THIS question per the rules. "
+        "Respond with the strict JSON object only."
+    )
+    text = await llm.chat(
+        messages=[
+            {"role": "system", "content": SYSTEM_ORCHESTRATOR + "\n\n" + _method_skill()},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+        max_tokens=700,
+    )
+    if not text:
+        return None
+    # Parse: fenced JSON → bare {...} → give up.
+    m = _re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    raw = m.group(1) if m else text
+    m2 = _re.search(r"\{[\s\S]*\}", raw)
+    if not m2:
+        return None
+    try:
+        obj = _json.loads(m2.group(0))
+        narrative = str(obj.get("narrative") or "").strip()
+        steps = [str(s) for s in (obj.get("steps") or []) if isinstance(s, str)]
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if not narrative or not steps:
+        return None
+    return narrative, steps
 
 
 async def llm_narrate(

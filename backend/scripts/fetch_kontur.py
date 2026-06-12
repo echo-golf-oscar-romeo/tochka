@@ -91,11 +91,14 @@ def main() -> int:
     # column with the resolution-8 cell id, so we re-use that rather than
     # recomputing.
     has_h3 = "h3" in col_names
+    # always_xy=true is CRITICAL: without it EPSG:4326 output uses PROJ's
+    # authority axis order (lat first), so ST_X silently returns latitude
+    # and the whole grid lands in the Indian Ocean.
     sql = f"""
         SELECT
             {"h3," if has_h3 else "NULL AS h3,"}
-            ST_X(ST_Transform(ST_Centroid(geom), 'EPSG:3857', 'EPSG:4326')) AS lng,
-            ST_Y(ST_Transform(ST_Centroid(geom), 'EPSG:3857', 'EPSG:4326')) AS lat,
+            ST_X(ST_Transform(ST_Centroid(geom), 'EPSG:3857', 'EPSG:4326', true)) AS lng,
+            ST_Y(ST_Transform(ST_Centroid(geom), 'EPSG:3857', 'EPSG:4326', true)) AS lat,
             CAST({pop_col} AS DOUBLE) AS population
         FROM ST_Read(?)
         WHERE {pop_col} IS NOT NULL

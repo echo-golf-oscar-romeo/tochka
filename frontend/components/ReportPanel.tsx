@@ -7,6 +7,7 @@ import {
   Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { BookmarkCheck, BookmarkPlus, Maximize2, Minimize2, X } from "lucide-react";
+import MapCanvas from "./MapCanvas";
 import type { ChartSpec, StorymapResult, StorymapSection } from "@/lib/storymap";
 
 // House palette (tailwind tokens, hard-coded for chart fills).
@@ -126,7 +127,18 @@ export default function ReportPanel({ spec, open, saved, onSave, onClose }: Prop
                   <h1 className="text-2xl md:text-3xl font-semibold tracking-tightish text-ink leading-tight mb-2">
                     {spec.summary?.split(".")[0] ?? "Network report"}
                   </h1>
-                  <p className="text-[13.5px] text-ink/70 max-w-prose leading-relaxed">{spec.summary}</p>
+                  <p className="text-[13.5px] text-ink/70 max-w-prose leading-relaxed mb-5">{spec.summary}</p>
+                  {/* The evidence map — every analysis layer, static. */}
+                  {(spec.layers?.length ?? 0) > 0 && (
+                    <figure className="rounded-xl border border-border overflow-hidden">
+                      <div className="h-64 w-full no-logo">
+                        <MapCanvas layers={spec.layers} autoFit interactive={false} />
+                      </div>
+                      <figcaption className="px-3.5 py-2 text-[10px] text-subtle bg-surface border-t border-border">
+                        analysis layers · {spec.layers.length} — interact with them on the main map
+                      </figcaption>
+                    </figure>
+                  )}
                 </header>
 
                 {sections.map((section, i) => (

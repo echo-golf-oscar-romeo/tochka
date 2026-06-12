@@ -1,43 +1,34 @@
-"""Expand-archetype tool — opportunity scoring on a hex grid.
+"""Expand-archetype tool — opportunity scoring on the real population grid.
 
-For each user location we have an isochrone polygon and a catchment-population
-estimate from earlier tools. The opportunity score is "where is there
-population that's NOT inside any of those isochrones?" — i.e. uncovered demand.
+Opportunity = residents the current network doesn't reach. For every Kontur
+H3 r8 cell (real population, ~0.74 km² hexes) we compute
 
-Without a real HK population grid (CSDI FSDT not yet wired) we produce a
-synthetic but plausible H3 cell layout: scatter cells across a HK bbox,
-weight each by distance to the nearest user location (closer-to-nothing
-= higher score). The top N cells are the candidate areas to expand into.
+    score = norm(population) × norm(min(distance to nearest branch, cap))
+
+so a cell scores high only when it BOTH holds people AND sits far from every
+existing location. Distance is capped (default 3 km) so outlying islands
+don't dominate, and empty cells are skipped entirely — the old synthetic
+version scored bare distance on a bbox grid and kept "finding" opportunity
+in the harbour.
+
+Returns the top-N cells as true H3 hexagon polygons with population,
+distance, and a 0..1 score.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import Any
 
-from app.config import get_settings
+import h3
+
+from app.clients.ddb import ensure_kontur_loaded, get_duckdb
 from app.models.network import Location
 
 log = logging.getLogger(__name__)
 
-
-# Approximate Hong Kong bbox (West, South, East, North)
-_HK_BBOX = (114.10, 22.18, 114.31, 22.42)
-
-
-def _approx_hex_grid(bbox: tuple[float, float, float, float], step_deg: float = 0.005):
-    """Generate cell centers on a regular grid covering the bbox. Not strictly
-    H3 but visually close at city scale and avoids the h3 dependency in the
-    hot path."""
-    w, s, e, n = bbox
-    lng = w
-    while lng <= e:
-        lat = s
-        while lat <= n:
-            yield (lng, lat)
-            lat += step_deg
-        lng += step_deg
+_DIST_CAP_M = 3_000.0
+_MIN_POP = 200.0          # ignore near-empty cells
 
 
 def _approx_distance_m(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> float:
@@ -48,48 +39,65 @@ def _approx_distance_m(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -
 
 
 async def opportunity_hexes(locations: list[Location], top_n: int = 60) -> list[dict]:
-    """Hex-ish polygons across HK scored by distance to the nearest user
-    location. Returns the top N cells as small square polygons (degree-aligned)
-    with a `score` 0..1 where 1 = most underserved.
+    """Top-N uncovered-demand cells as H3 hexagon GeoJSON features.
+
+    Properties: score (0..1), population, distance_to_nearest_branch_m, h3.
     """
-    centers = list(_approx_hex_grid(_HK_BBOX, step_deg=0.005))
-    user_pts = [(loc.lat, loc.lng) for loc in locations if loc.lat is not None and loc.lng is not None]
+    user_pts = [(loc.lat, loc.lng) for loc in locations
+                if loc.lat is not None and loc.lng is not None]
     if not user_pts:
         return []
 
-    scored: list[tuple[float, float, float]] = []
-    for (lng, lat) in centers:
-        nearest = min(_approx_distance_m(lat, lng, ulat, ulng) for (ulat, ulng) in user_pts)
-        scored.append((lng, lat, nearest))
+    conn = get_duckdb()
+    ensure_kontur_loaded(conn)
+    try:
+        rows = conn.execute(
+            "SELECT h3, lat, lng, population FROM kontur_pop_hex WHERE population >= ?",
+            [_MIN_POP],
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.warning("opportunity_hexes: kontur unavailable (%s) — returning nothing.", e)
+        return []
+    if not rows:
+        return []
 
-    scored.sort(key=lambda r: -r[2])    # furthest from any user location first
+    max_pop = max(float(r[3]) for r in rows)
+    scored: list[tuple[str, float, float, float, float, float]] = []
+    for cell, lat, lng, pop in rows:
+        nearest = min(_approx_distance_m(lat, lng, ulat, ulng) for (ulat, ulng) in user_pts)
+        d = min(nearest, _DIST_CAP_M)
+        score = (float(pop) / max_pop) * (d / _DIST_CAP_M)
+        if score <= 0:
+            continue
+        scored.append((cell, lat, lng, float(pop), nearest, score))
+
+    scored.sort(key=lambda r: -r[5])
     picked = scored[: max(top_n, 1)]
-    max_dist = picked[0][2] if picked else 1.0
+    if not picked:
+        return []
+    top_score = picked[0][5]
 
     features: list[dict] = []
-    side = 0.0024    # ~250 m on a side at HK latitude
-    for (lng, lat, dist) in picked:
-        score = round(dist / max_dist, 3) if max_dist else 0.0
-        ring = [
-            [lng - side / 2, lat - side / 2],
-            [lng + side / 2, lat - side / 2],
-            [lng + side / 2, lat + side / 2],
-            [lng - side / 2, lat + side / 2],
-            [lng - side / 2, lat - side / 2],
-        ]
+    for cell, lat, lng, pop, nearest, score in picked:
+        try:
+            boundary = h3.cell_to_boundary(cell)          # [(lat, lng), ...]
+            ring = [[bl, bb] for (bb, bl) in boundary]    # → [lng, lat]
+            if ring and ring[0] != ring[-1]:
+                ring.append(ring[0])
+        except Exception:  # noqa: BLE001 — bad cell id → skip
+            continue
         features.append({
             "type": "Feature",
             "geometry": {"type": "Polygon", "coordinates": [ring]},
             "properties": {
-                "score": score,
-                "distance_to_nearest_branch_m": round(dist, 0),
+                "h3": cell,
+                "score": round(score / top_score, 3),
+                "population": int(pop),
+                "distance_to_nearest_branch_m": round(nearest, 0),
             },
         })
-    log.info("opportunity_hexes: returned %d cells (top %d of %d).", len(features), top_n, len(centers))
+    log.info("opportunity_hexes: %d real population cells (top %d).", len(features), top_n)
     return features
 
 
-# When called via the LLM, even outside demo mode, this is "real enough" for
-# the demo — once CSDI Population Distribution is wired, the same call site
-# can swap in real population-weighted scoring without changing the contract.
 __all__ = ["opportunity_hexes"]
