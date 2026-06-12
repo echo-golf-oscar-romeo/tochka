@@ -152,20 +152,21 @@ def build_cannibalisation_layer(pairs: list[dict]) -> Layer:
 
 
 def build_opportunity_layer(cells: list[dict]) -> Layer:
-    """Hex-grid cells coloured by uncovered-demand score (yellow → magenta)."""
+    """Hex cells coloured by uncovered-demand score — single-hue yellow,
+    light → dark (project rule: graded layers use one hue, no rainbows)."""
     return make_layer(
         "opportunity", "geojson", _fc(cells),
         paint={
             "fill-color": [
                 "interpolate", ["linear"], ["get", "score"],
-                0.0, PALETTE["opportunity_low"],   # yellow
-                0.5, "#FA37B2",                    # pink
-                1.0, PALETTE["opportunity_high"],  # magenta
+                0.0, "#FEF6D8",
+                0.5, "#FAD037",
+                1.0, "#8F7400",
             ],
-            "fill-opacity": 0.20,                  # 70 % transparent — polygon rule
-            "line-color": PALETTE["opportunity_high"],
+            "fill-opacity": 0.45,
+            "line-color": PAPER,
             "line-width": 0.5,
-            "line-opacity": 0.4,
+            "line-opacity": 0.6,
         },
     )
 

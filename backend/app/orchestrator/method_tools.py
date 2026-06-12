@@ -41,6 +41,27 @@ ACCENT = "#4F35F8"
 CLUSTER_COLOURS = ["#4F35F8", "#FB3640", "#FA8237", "#37B2FA", "#37FA7E", "#C637FA", "#FAD037", "#FA37B2"]
 LISA_COLOURS = {"HH": "#FB3640", "LL": "#37B2FA", "HL": "#FA8237", "LH": "#C637FA", "ns": "#9a9890"}
 
+# Single-hue sequential ramps (light tint → project colour → dark shade).
+# Project rule: graded layers use ONE hue from the palette, never rainbows.
+RAMP = {
+    "purple": ["#EFECFF", "#7560fb", "#321bb8"],
+    "red":    ["#FFE6E8", "#FB3640", "#8C1118"],
+    "pink":   ["#FFE3F3", "#FA37B2", "#8F1B64"],
+    "yellow": ["#FEF6D8", "#FAD037", "#8F7400"],
+    "green":  ["#DEFCEB", "#37FA7E", "#0E8C44"],
+    "blue":   ["#E5F4FF", "#37B2FA", "#155C8F"],
+    "orange": ["#FFEEDF", "#FA8237", "#8F4513"],
+}
+
+
+def ramp_expr(prop: str, vmin: float, vmax: float, hue: str) -> list:
+    """MapLibre interpolate expression: single-hue light→dark over a value."""
+    lo, mid, hi = RAMP[hue]
+    if vmax <= vmin:
+        vmax = vmin + 1.0
+    vmid = vmin + (vmax - vmin) / 2
+    return ["interpolate", ["linear"], ["get", prop], vmin, lo, vmid, mid, vmax, hi]
+
 
 # ---------------------------------------------------------------------------
 # Intent classification
@@ -181,11 +202,22 @@ def _circle_layer(layer_id: str, label: str, rows: list[dict], paint: dict) -> d
 
 async def run_optimize_coverage(network: Network, params: dict) -> dict[str, Any]:
     demand = _demand_cells()
-    candidates = _candidate_cells()
-    if not demand or not candidates:
+    if not demand:
         return _err("No Kontur demand data loaded — can't optimise coverage.")
-    p = int(params.get("count") or max(3, len(network.locations) or 5))
+    # P is the number of NEW sites to open — a strategic handful, never the
+    # size of the network. (A 105-branch upload once produced 105 "optimal
+    # sites" because the default was max(3, len(network)).) Clamp 1..10.
+    p = max(1, min(int(params.get("count") or 5), 10))
     radius = float(params.get("radius_m") or 800.0)
+    # Candidates come from the WHITESPACE first: high-demand cells far from
+    # the existing network. Optimising over generic populated cells would
+    # happily "open" next to branches that already cover the demand.
+    existing = _network_points(network)
+    gaps = siteselection.whitespace_gaps(demand, existing, top_n=40,
+                                         min_distance_m=600.0).get("gaps", [])
+    candidates = [{"id": f"gap{i}", **g} for i, g in enumerate(gaps)]
+    if len(candidates) < p:
+        candidates = _candidate_cells(cap=60)
     res = optimization.mclp(demand, candidates, p=p, radius_m=radius)
     if res.get("error"):
         return _err("Coverage optimisation had no candidates to work with.")
@@ -194,15 +226,17 @@ async def run_optimize_coverage(network: Network, params: dict) -> dict[str, Any
         "id": f"mclp-{p}-{int(radius)}m", "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": _point_features(
             [{**s, "rank": i + 1} for i, s in enumerate(selected)])},
-        "paint": {"circle-color": ACCENT, "circle-radius": 9,
+        # Pink — instantly distinct from the purple network + orange competitors.
+        "paint": {"circle-color": "#FA37B2", "circle-radius": 9,
                   "circle-stroke-color": PAPER, "circle-stroke-width": 2.5},
-        "label": f"MCLP · {p} optimal sites ({int(radius)}m)",
+        "label": f"MCLP · {len(selected)} optimal new sites ({int(radius)}m)",
     }
     answer = (
-        f"Maximal-coverage optimisation (MCLP): placing {p} facilities with a "
-        f"{int(radius)}m catchment covers {res['demand_covered_pct']}% of modelled "
-        f"residential demand ({res['demand_covered_abs']:,} of {res['demand_total']:,} "
-        f"people). The {len(selected)} chosen sites are on the map."
+        f"Maximal-coverage optimisation (MCLP) over the white-space candidates: "
+        f"{len(selected)} new sites with a {int(radius)}m catchment cover "
+        f"{res['demand_covered_pct']}% of the uncovered modelled demand "
+        f"({res['demand_covered_abs']:,} of {res['demand_total']:,} people). "
+        f"The pink points are the chosen sites."
     )
     return _ok(answer, layer, rows=selected, columns=["lat", "lng", "population"],
                provider="mclp")
@@ -224,8 +258,10 @@ async def run_best_new_point(network: Network, params: dict) -> dict[str, Any]:
         "id": f"best-new-{int(radius)}m", "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": feats},
         "paint": {
-            "circle-color": ["interpolate", ["linear"], ["get", "new_demand_captured"],
-                             0, "#37FA7E", 5000, "#FAD037", 20000, "#FB3640"],
+            # Single-hue green: darker = more net-new demand captured.
+            "circle-color": ramp_expr("new_demand_captured", 0,
+                                      max((r["new_demand_captured"] for r in ranked), default=1),
+                                      "green"),
             "circle-radius": ["interpolate", ["linear"], ["get", "rank"], 1, 11, 30, 4],
             "circle-stroke-color": PAPER, "circle-stroke-width": 2,
         },
@@ -249,8 +285,8 @@ async def run_whitespace(network: Network, params: dict) -> dict[str, Any]:
         "id": "whitespace-gaps", "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": feats},
         "paint": {
-            "circle-color": ["interpolate", ["linear"], ["get", "gap_score"],
-                             0, "#FAD037", 0.5, "#FA8237", 1.0, "#FB3640"],
+            # Single-hue red: darker = bigger gap.
+            "circle-color": ramp_expr("gap_score", 0.0, 1.0, "red"),
             "circle-radius": 8, "circle-stroke-color": PAPER, "circle-stroke-width": 1.5,
             "circle-opacity": 0.9,
         },
@@ -397,8 +433,8 @@ async def run_find_similar(network: Network, params: dict) -> dict[str, Any]:
         "id": "find-similar", "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": feats},
         "paint": {
-            "circle-color": ["interpolate", ["linear"], ["get", "similarity"],
-                             -0.2, "#9a9890", 0.4, "#37B2FA", 1.0, "#4F35F8"],
+            # Single-hue purple: darker = more similar to the target.
+            "circle-color": ramp_expr("similarity", -0.2, 1.0, "purple"),
             "circle-radius": 8, "circle-stroke-color": PAPER, "circle-stroke-width": 2,
         },
         "label": f"Similarity to {target.get('name') or 'target'}",
@@ -486,8 +522,9 @@ async def run_accessibility(network: Network, params: dict) -> dict[str, Any]:
         "id": f"access-2sfca-{int(radius)}m", "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": feats},
         "paint": {
-            "circle-color": ["interpolate", ["linear"], ["get", "access_2sfca"],
-                             0, "#FB3640", 0.01, "#FA8237", 0.05, "#37FA7E"],
+            # Single-hue green: darker = better served. Pale cells are the
+            # access-poor neighbourhoods the narrative calls out.
+            "circle-color": ramp_expr("access_2sfca", 0.0, 0.05, "green"),
             "circle-radius": 5, "circle-opacity": 0.8,
         },
         "label": f"2SFCA accessibility ({int(radius)}m)",

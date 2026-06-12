@@ -1280,17 +1280,17 @@ async def run_h3_aggregate(*, network: Network, resolution: int) -> dict[str, An
         "kind": "geojson",
         "data": {"type": "FeatureCollection", "features": features},
         "paint": {
+            # Single-hue yellow sequential: darker = more competitive pressure.
             "fill-color": [
                 "interpolate", ["linear"], ["get", "intensity"],
-                0.5, "#37FA7E",
-                1.0, "#FAD037",
-                3.0, "#FB3640",
-                10.0, "#C637FA",
+                0.5, "#FEF6D8",
+                2.0, "#FAD037",
+                8.0, "#8F7400",
             ],
-            "fill-opacity": 0.20,
-            "line-color": "#0A0903",
+            "fill-opacity": 0.45,
+            "line-color": "#FDFDFD",
             "line-width": 0.4,
-            "line-opacity": 0.5,
+            "line-opacity": 0.6,
         },
         "label": f"H3 r{resolution} · competitive intensity",
     }
