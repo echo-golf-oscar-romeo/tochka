@@ -196,7 +196,9 @@ export default function ChatPanel({
           </div>
         )}
         {messages.map((m, i) => (
-          <MessageBubble key={i} m={m} />
+          <div key={i} className="fade-in-up">
+            <MessageBubble m={m} />
+          </div>
         ))}
         {busy && (
           <div className="text-muted italic flex items-center gap-2 text-xs">

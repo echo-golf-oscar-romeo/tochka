@@ -63,6 +63,9 @@ OSM_CATEGORIES: dict[str, dict[str, Any]] = {
     "hotels":       {"overpass": '["tourism"~"hotel|hostel|guest_house"]', "aliases": ["hotel", "hostels"]},
     "museums":      {"overpass": '["tourism"="museum"]', "aliases": ["museum", "galleries"]},
     "atms":         {"overpass": '["amenity"="atm"]', "aliases": ["atm"]},
+    "cinemas":      {"overpass": '["amenity"="cinema"]', "aliases": ["cinema", "movie theaters", "movie theatres"]},
+    "libraries":    {"overpass": '["amenity"="library"]', "aliases": ["library"]},
+    "gyms":         {"overpass": '["leisure"~"fitness_centre|sports_centre"]', "aliases": ["gym", "fitness centres"]},
 }
 
 # Map an alias → canonical category for normalisation.
@@ -302,6 +305,13 @@ def _match_h3(msg: str) -> ClassifiedIntent | None:
 # ---------------------------------------------------------------------------
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Public mirrors tried in order when the primary is overloaded — the main
+# instance frequently sheds load by dropping connections mid-response.
+OVERPASS_MIRRORS = [
+    OVERPASS_URL,
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
 HK_BBOX = "22.15,113.83,22.57,114.45"   # S,W,N,E
 
 # Overpass-api.de's operators rate-limit / block requests that arrive with
@@ -311,6 +321,22 @@ HK_BBOX = "22.15,113.83,22.57,114.45"   # S,W,N,E
 OVERPASS_HEADERS = {
     "User-Agent": "tochka/0.1 (https://github.com/echo-golf-oscar-romeo/tochka)",
 }
+
+
+async def overpass_post(query: str, timeout: float = 45.0) -> dict[str, Any]:
+    """POST to Overpass with mirror fallback. Raises the last error when
+    every mirror fails; callers turn that into a friendly chat answer."""
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(timeout=timeout, headers=OVERPASS_HEADERS) as client:
+        for url in OVERPASS_MIRRORS:
+            try:
+                r = await client.post(url, data={"data": query})
+                r.raise_for_status()
+                return r.json()
+            except Exception as e:  # noqa: BLE001 — try the next mirror
+                log.warning("Overpass mirror %s failed: %s", url, str(e)[:120])
+                last_exc = e
+    raise last_exc if last_exc else RuntimeError("no Overpass mirrors configured")
 
 
 async def run_osm_fetch(category: str, raw: str | None = None) -> dict[str, Any]:
@@ -335,35 +361,33 @@ async def run_osm_fetch(category: str, raw: str | None = None) -> dict[str, Any]
     """.strip()
 
     rows: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=30.0, headers=OVERPASS_HEADERS) as client:
-        try:
-            r = await client.post(OVERPASS_URL, data={"data": query})
-            r.raise_for_status()
-            data = r.json()
-        except Exception as e:
-            log.warning("Overpass fetch failed for %s: %s", category, e)
-            return {
-                "answer": f"Couldn't reach Overpass to load `{category}` — {e}.",
-                "rows": [], "columns": [], "layer": None, "sql": None,
-                "error": "overpass_failed",
-            }
-        for el in data.get("elements", []):
-            if el.get("type") == "node":
-                lat, lng = el.get("lat"), el.get("lon")
-            else:
-                centre = el.get("center") or {}
-                lat, lng = centre.get("lat"), centre.get("lon")
-            if lat is None or lng is None:
-                continue
-            tags = el.get("tags", {})
-            rows.append({
-                "id": f"{el['type']}/{el['id']}",
-                "name": tags.get("name") or tags.get("operator") or category,
-                "brand": tags.get("brand"),
-                "lat": float(lat),
-                "lng": float(lng),
-                "tags": tags,
-            })
+    try:
+        data = await overpass_post(query, timeout=30.0)
+    except Exception as e:  # noqa: BLE001 — all mirrors down
+        log.warning("Overpass fetch failed for %s on all mirrors: %s", category, e)
+        return {
+            "answer": f"Couldn't reach Overpass (tried {len(OVERPASS_MIRRORS)} mirrors) "
+                      f"to load `{category}` — {e}. Usually transient; try again in a minute.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "overpass_failed",
+        }
+    for el in data.get("elements", []):
+        if el.get("type") == "node":
+            lat, lng = el.get("lat"), el.get("lon")
+        else:
+            centre = el.get("center") or {}
+            lat, lng = centre.get("lat"), centre.get("lon")
+        if lat is None or lng is None:
+            continue
+        tags = el.get("tags", {})
+        rows.append({
+            "id": f"{el['type']}/{el['id']}",
+            "name": tags.get("name") or tags.get("operator") or category,
+            "brand": tags.get("brand"),
+            "lat": float(lat),
+            "lng": float(lng),
+            "tags": tags,
+        })
 
     if not rows:
         return {
@@ -605,6 +629,19 @@ Examples:
 
   Query: "every Starbucks"
   → {"name": "starbucks", "filters": ["node[\\"amenity\\"=\\"cafe\\"][\\"brand\\"~\\"Starbucks\\",i]", "node[\\"brand:wikidata\\"=\\"Q37158\\"]"]}
+
+  Query: "cinemas in kowloon"
+  → {"name": "cinemas", "filters": ["node[\\"amenity\\"=\\"cinema\\"]", "way[\\"amenity\\"=\\"cinema\\"]"]}
+
+  Query: "bridges in kowloon"
+  → {"name": "bridges", "filters": ["way[\\"bridge\\"=\\"yes\\"][\\"highway\\"]"]}
+
+  Query: "landuse around the harbour"
+  → {"name": "landuse", "filters": ["way[\\"landuse\\"~\\"residential|commercial|retail|industrial\\"]"]}
+
+A district mention ("in kowloon", "on hong kong island") does NOT change the
+filters — the runtime applies a Hong Kong bounding box itself; never invent
+an area filter.
 """
 
 
@@ -822,27 +859,16 @@ async def run_osm_freeform(*, query: str) -> dict[str, Any]:
     # `tags` is itself an output-type specifier that conflicts with `body`.
     overpass_query = f"[out:json][timeout:30];\n(\n  {body}\n);\nout geom;"
 
-    async with httpx.AsyncClient(timeout=45.0, headers=OVERPASS_HEADERS) as client:
-        try:
-            r = await client.post(OVERPASS_URL, data={"data": overpass_query})
-            if r.status_code >= 400:
-                log.warning(
-                    "Overpass freeform HTTP %s for %r. Body: %s | Query: %s",
-                    r.status_code, query, r.text[:300], overpass_query[:300],
-                )
-                return {
-                    "answer": f"Overpass {r.status_code}: {r.text[:200] if r.text else '(no body)'}",
-                    "rows": [], "columns": [], "layer": None, "sql": None,
-                    "error": "overpass_http",
-                }
-            data = r.json()
-        except Exception as e:
-            log.warning("Overpass freeform fetch failed for %r: %s", query, e)
-            return {
-                "answer": f"Couldn't reach Overpass: {e}",
-                "rows": [], "columns": [], "layer": None, "sql": None,
-                "error": "overpass_failed",
-            }
+    try:
+        data = await overpass_post(overpass_query, timeout=45.0)
+    except Exception as e:  # noqa: BLE001 — all mirrors failed
+        log.warning("Overpass freeform failed on all mirrors for %r: %s", query, e)
+        return {
+            "answer": f"Couldn't reach Overpass (tried {len(OVERPASS_MIRRORS)} mirrors): {e}. "
+                      "Usually transient — try again in a minute.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "overpass_failed",
+        }
 
     features: list[dict] = []
     geom_types: set[str] = set()
