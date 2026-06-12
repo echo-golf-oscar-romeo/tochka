@@ -65,6 +65,10 @@ _RE = {
     "whitespace": re.compile(
         r"\b(white\s?space|gaps?|under-?served|uncovered\s+(demand|areas?)|coverage\s+gaps?|"
         r"where\s+(am\s+i|are\s+we)\s+missing)\b", re.IGNORECASE),
+    "hexgrid_lisa": re.compile(
+        r"\b(?:hex|h3|grid)\b[^.?!]*\b(?:lisa|moran|hot|cold)|"
+        r"\b(?:lisa|moran|hot\s?spots?|cold\s?spots?)\b[^.?!]*\b(?:hex|h3|grid)\b",
+        re.IGNORECASE),
     "hotspots": re.compile(
         r"\b(hot\s?spots?|cold\s?spots?|moran|lisa|getis|gi\*|spatial\s+autocorrelation|"
         r"spatially\s+clustered|clusters?\s+of\s+(high|low)|where\s+do\s+.*cluster)\b",
@@ -93,7 +97,7 @@ def classify_method(message: str) -> MethodIntent | None:
     # phrases like "areas that look like my best branch" contain "best
     # branch" and would otherwise be stolen by the best-new-point regex.
     for kind in ("find_similar", "best_new_point", "whitespace", "optimize_coverage",
-                 "hotspots", "cluster", "drivers", "accessibility"):
+                 "hexgrid_lisa", "hotspots", "cluster", "drivers", "accessibility"):
         if _RE[kind].search(msg):
             params: dict[str, Any] = {}
             n = re.search(r"\b(\d{1,3})\b", msg)
@@ -288,6 +292,91 @@ async def run_hotspots(network: Network, params: dict) -> dict[str, Any]:
                columns=["name", "cluster", "lisa_i", "lisa_p"], provider="lisa")
 
 
+async def run_hexgrid_lisa(network: Network, params: dict) -> dict[str, Any]:
+    """LISA on BANK-BRANCH COUNTS per H3 r8 cell across Hong Kong.
+
+    Frame = the inhabited Kontur cells (so empty harbour cells don't dilute
+    the statistic); value = competitor banks (+ the user's own branches) in
+    each cell. Hot spots (HH) red, cold spots (LL) blue, outliers orange/
+    purple, not-significant gray — rendered as FILLED hexagons."""
+    import h3 as _h3
+
+    conn = get_duckdb()
+    ensure_kontur_loaded(conn)
+    ensure_osm_loaded(conn)
+    try:
+        cells = conn.execute(
+            "SELECT h3, lat, lng, population FROM kontur_pop_hex "
+            "WHERE population > 0 ORDER BY population DESC LIMIT 800"
+        ).fetchall()
+        banks = conn.execute(
+            "SELECT lat, lng FROM osm_pois WHERE type='bank' AND lat IS NOT NULL"
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001
+        return _err(f"Hex-grid LISA needs the Kontur + OSM tables: {e}")
+    if len(cells) < 20:
+        return _err("Not enough populated cells for a hex-grid LISA.")
+
+    counts: dict[str, int] = {c[0]: 0 for c in cells}
+    for lat, lng in banks:
+        cell = _h3.latlng_to_cell(float(lat), float(lng), 8)
+        if cell in counts:
+            counts[cell] += 1
+    for loc in network.locations:
+        if loc.lat is None or loc.lng is None:
+            continue
+        cell = _h3.latlng_to_cell(loc.lat, loc.lng, 8)
+        if cell in counts:
+            counts[cell] += 1
+
+    pts = [{"h3": c[0], "lat": c[1], "lng": c[2], "branches": counts[c[0]]} for c in cells]
+    res = geostatistics.local_morans(pts, "branches", k=6)
+    if res.get("error"):
+        return _err("LISA failed on the hex grid.")
+
+    features = []
+    for p in res["locations"]:
+        try:
+            boundary = _h3.cell_to_boundary(p["h3"])
+            ring = [[lng_, lat_] for (lat_, lng_) in boundary]
+            if ring and ring[0] != ring[-1]:
+                ring.append(ring[0])
+        except Exception:  # noqa: BLE001
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {"h3": p["h3"], "branches": p["branches"],
+                           "cluster": p["cluster"], "lisa_p": p["lisa_p"]},
+        })
+    match_expr: list[Any] = ["match", ["get", "cluster"]]
+    for cat, col in LISA_COLOURS.items():
+        match_expr += [cat, col]
+    match_expr += ["#9a9890"]
+    layer = {
+        "id": "hexgrid-lisa-branches", "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": {
+            "fill-color": match_expr,
+            "fill-opacity": ["case", ["==", ["get", "cluster"], "ns"], 0.10, 0.55],
+            "line-color": "#FDFDFD", "line-width": 0.4, "line-opacity": 0.5,
+        },
+        "label": "LISA · branch density hot/cold spots (H3 r8)",
+    }
+    c = res["counts"]
+    answer = (
+        f"LISA on branch counts per H3 r8 cell ({len(pts)} inhabited cells): "
+        f"{c['HH']} hot-spot cells (red — banking clusters like Central/TST), "
+        f"{c['LL']} cold spots (blue — populated but bank-sparse), "
+        f"{c['HL'] + c['LH']} spatial outliers. Cold spots adjacent to hot ones "
+        "are natural expansion candidates."
+    )
+    return _ok(answer, layer,
+               rows=[{"h3": p["h3"], "branches": p["branches"], "cluster": p["cluster"]}
+                     for p in res["locations"] if p["cluster"] != "ns"][:30],
+               columns=["h3", "branches", "cluster"], provider="hexgrid_lisa")
+
+
 async def run_find_similar(network: Network, params: dict) -> dict[str, Any]:
     pts = _network_points(network)
     if len(pts) < 2:
@@ -425,6 +514,7 @@ _HANDLERS = {
     "optimize_coverage": run_optimize_coverage,
     "best_new_point": run_best_new_point,
     "whitespace": run_whitespace,
+    "hexgrid_lisa": run_hexgrid_lisa,
     "hotspots": run_hotspots,
     "find_similar": run_find_similar,
     "cluster": run_cluster,

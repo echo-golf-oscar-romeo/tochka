@@ -33,17 +33,20 @@ LAYER_PALETTE = [
     "#FA8237",  # 7 orange
 ]
 
+# Every layer gets its OWN hue (round-10 rule): network purple, competitors
+# orange, isochrones mint, anomalies red, cannibalisation pink, opportunity
+# yellow→magenta ramp, population grid sky blue, choropleth purple ramp.
 PALETTE = {
-    "user_network": PRIMARY,
-    "competitor":   LAYER_PALETTE[7],   # orange — distinct from purple primary
-    "isochrone":    PRIMARY,            # match user network, transparent fill
+    "user_network": PRIMARY,               # purple — reserved for the brand + own points
+    "competitor":   LAYER_PALETTE[7],      # orange
+    "isochrone":    LAYER_PALETTE[5],      # mint — catchments read apart from network
     "hex_low":      "#f6f4ef",
     "hex_high":     INK,
-    "anomaly_under": SECONDARY,
-    "anomaly_over":  LAYER_PALETTE[6],  # green
-    "cannibalisation": SECONDARY,
+    "anomaly_under": SECONDARY,            # red
+    "anomaly_over":  LAYER_PALETTE[6],     # green
+    "cannibalisation": LAYER_PALETTE[2],   # pink — no longer collides with anomalies
     "opportunity_low":  LAYER_PALETTE[0],  # yellow — low score
-    "opportunity_high": "#C637FA",          # magenta — high score
+    "opportunity_high": "#C637FA",         # magenta — high score
 }
 
 # Basemap style emitted into the storymap payload. Carto Positron is the
@@ -106,10 +109,10 @@ def build_isochrones_layer(isochrones: list[dict]) -> Layer:
         "isochrones", "geojson", _fc(isochrones),
         paint={
             "fill-color": PALETTE["isochrone"],
-            "fill-opacity": 0.20,           # ≈ 70 % transparent — polygon rule
-            "line-color": PALETTE["isochrone"],
+            "fill-opacity": 0.25,
+            "line-color": "#0e9e85",        # darker mint edge for legibility
             "line-width": 1.5,
-            "line-opacity": 0.7,
+            "line-opacity": 0.8,
         },
     )
 
@@ -286,20 +289,17 @@ async def compose_storymap(
     ]
 
     # Dynamic-methodology findings (whitespace, coverage optimisation, LISA,
-    # look-alikes, …) get their own section before next-steps, so the report
-    # changes with the methodology rather than always telling one story.
+    # look-alikes, …): each specialised analysis becomes its OWN report
+    # section before next-steps, so the second half of every report shows
+    # the results of THAT methodology instead of one stock story.
     if findings:
-        sections.insert(4, StorymapSection(
-            id="method-findings",
-            title="What the methods found",
-            description=(
-                f"The methodology ran {len(findings)} specialised analyses on top of "
-                "the base catchment model. Each finding below is grounded in the "
-                "layers already on your map."
-            ),
-            location=map_loc,
-            callouts=[f"{title}: {text}" for title, text in findings[:5]],
-        ))
+        for i, (f_title, f_text) in enumerate(findings[:6]):
+            sections.insert(4 + i, StorymapSection(
+                id=f"finding-{i}",
+                title=f_title,
+                description=f_text,
+                location=map_loc,
+            ))
 
     return StorymapResult(
         id="pending",  # filled in by the orchestrator

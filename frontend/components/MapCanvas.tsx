@@ -253,11 +253,20 @@ function addOrReplaceLayer(map: MlMap, layer: StoryLayer, known: Set<string>) {
   const isPolygon = sample === "Polygon" || sample === "MultiPolygon";
   const isLine = sample === "LineString" || sample === "MultiLineString";
   const visual: "fill" | "line" | "circle" = isPolygon ? "fill" : isLine ? "line" : "circle";
+  // CRITICAL: a MapLibre layer only accepts paint props of ITS type. Our
+  // layer specs mix fill-* and line-* (fill + outline in one spec) — passing
+  // line-color into a `fill` layer makes addLayer THROW, the catch upstream
+  // swallows it, and the polygon silently never renders ("polygons have no
+  // fill"). Filter to the prefix the layer type accepts; line-* goes to the
+  // separate -outline layer below.
+  const paintAll = (layer.paint ?? {}) as Record<string, unknown>;
+  const paintFor = (prefix: string) =>
+    Object.fromEntries(Object.entries(paintAll).filter(([k]) => k.startsWith(prefix)));
   map.addLayer({
     id: layer.id,
     type: visual,
     source: layer.id,
-    paint: layer.paint ?? {},
+    paint: paintFor(`${visual}-`),
   } as Parameters<MlMap["addLayer"]>[0]);
 
   if (isPolygon && (layer.paint as Record<string, unknown>)?.["line-color"]) {

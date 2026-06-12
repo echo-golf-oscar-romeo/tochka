@@ -82,7 +82,7 @@ export default function LayersList({ layers, visibility, onToggle, onRemove, onR
             onDragLeave={() => setOverId((cur) => (cur === layer.id ? null : cur))}
             onDrop={(e) => { e.preventDefault(); handleDrop(layer.id); }}
             onDragEnd={() => { setDragId(null); setOverId(null); }}
-            className={`group flex items-center gap-1.5 py-1.5 px-1.5 rounded-md transition-all duration-150 ${
+            className={`group fade-in-up flex items-center gap-1.5 py-1.5 px-1.5 rounded-md transition-all duration-150 ${
               isDragging ? "opacity-40 scale-[0.98]" : "hover:bg-rule"
             } ${isOver ? "ring-1 ring-accent-400 bg-accent-50" : ""}`}
           >

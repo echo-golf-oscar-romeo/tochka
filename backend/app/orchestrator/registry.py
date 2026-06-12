@@ -126,6 +126,57 @@ async def _run_cannibalisation(network: Network, ctx: dict) -> StepResult:
     )
 
 
+async def _run_population_grid(network: Network, ctx: dict) -> StepResult:
+    """Kontur population on true H3 hexes — the demand surface, as a layer."""
+    import h3 as _h3
+
+    from app.clients.ddb import ensure_kontur_loaded, get_duckdb
+    conn = get_duckdb()
+    if not ensure_kontur_loaded(conn):
+        return StepResult(summary={"note": "population grid unavailable"})
+    rows = conn.execute(
+        "SELECT h3, population FROM kontur_pop_hex WHERE population > 0"
+    ).fetchall()
+    features = []
+    vmax = max((float(r[1]) for r in rows), default=1.0)
+    for cell, pop in rows:
+        try:
+            boundary = _h3.cell_to_boundary(cell)
+            ring = [[lng, lat] for (lat, lng) in boundary]
+            if ring and ring[0] != ring[-1]:
+                ring.append(ring[0])
+        except Exception:  # noqa: BLE001
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {"population": int(pop)},
+        })
+    layer = {
+        "id": "population-grid", "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": {
+            # Sky-blue demand ramp — distinct from the purple district
+            # choropleth and the brand-purple network points.
+            "fill-color": ["interpolate", ["linear"], ["get", "population"],
+                           0, "#eaf6ff", vmax * 0.25, "#9bd1fa",
+                           vmax * 0.55, "#37B2FA", vmax, "#155c8f"],
+            "fill-opacity": 0.45,
+            "line-color": "#FDFDFD", "line-width": 0.3, "line-opacity": 0.4,
+        },
+        "label": f"Population grid · Kontur H3 ({len(features)} cells)",
+    }
+    ctx["population_grid"] = True
+    total = int(sum(float(r[1]) for r in rows))
+    return StepResult(
+        layers=[layer],
+        summary={"cells": len(features), "total_pop": total},
+        finding=("Demand surface",
+                 f"Hong Kong's {total:,} residents mapped on {len(features)} H3 cells — "
+                 "the demand surface every later step measures against."),
+    )
+
+
 async def _run_district_choropleth(network: Network, ctx: dict) -> StepResult:
     from app.orchestrator.chat_tools import run_choropleth
     r = await run_choropleth(network=network, metric="population")
@@ -185,6 +236,12 @@ REGISTRY: dict[str, Step] = {s.name: s for s in [
     Step("district_choropleth",
          "Population choropleth of the 18 HK districts — the demand backdrop for any expansion story.",
          produces=("district_population",), run=_run_district_choropleth),
+    Step("population_grid",
+         "The Kontur demand surface itself: population on H3 r8 hexes as a graded layer.",
+         produces=("population_grid",), run=_run_population_grid),
+    Step("hexgrid_lisa",
+         "LISA on branch counts per H3 cell HK-wide: red banking hot spots, blue under-banked cold spots.",
+         run=_method_runner("run_hexgrid_lisa", "Branch-density hot/cold spots")),
     Step("whitespace_gaps",
          "Under-served white space: high-demand cells far from every existing site.",
          run=_method_runner("run_whitespace", "White-space gaps")),
@@ -218,7 +275,7 @@ for _s in REGISTRY.values():
         _PRODUCER.setdefault(_k, _s.name)
 
 
-def resolve_plan(step_names: list[str], max_steps: int = 9) -> list[str]:
+def resolve_plan(step_names: list[str], max_steps: int = 12) -> list[str]:
     """Validate + dependency-resolve an ordered step list.
 
     Unknown names are dropped; prerequisites are inserted before their
@@ -244,15 +301,15 @@ def default_plan(archetypes: list[str], user_intent: str | None = None) -> list[
 
     Used when the methodologist LLM is unavailable; also the safety net the
     LLM's output is resolved against."""
-    base: list[str] = ["district_choropleth", "isochrone_walk", "competitors_in_radius",
-                       "population_in_polygon", "huff_model"]
+    base: list[str] = ["district_choropleth", "population_grid", "isochrone_walk",
+                       "competitors_in_radius", "population_in_polygon", "huff_model"]
     extras: list[str] = []
     if "diagnose" in archetypes:
-        extras += ["anomaly_detect", "lisa_hotspots"]
+        extras += ["anomaly_detect", "lisa_hotspots", "drivers_regression"]
     if "expand" in archetypes:
-        extras += ["opportunity_hexes", "whitespace_gaps"]
+        extras += ["opportunity_hexes", "whitespace_gaps", "hexgrid_lisa"]
     if "rationalise" in archetypes:
-        extras += ["cannibalisation_pairs", "cluster_segments"]
+        extras += ["cannibalisation_pairs", "cluster_segments", "accessibility_2sfca"]
 
     # Intent keywords refine the tail (mirrors the chat method router).
     intent = (user_intent or "").lower()

@@ -37,88 +37,71 @@ CONVERSION_RATE = 0.10
 
 
 async def huff_model(locations: list[Location], competitors: list[dict],
-                     population: dict[str, Any], beta: float = 1.5) -> list[dict]:
-    """Huff probabilistic catchment per location, computed via DuckDB SQL.
+                     population: dict[str, Any], decay_scale_m: float = 800.0,
+                     default_capacity: float = 100.0,
+                     competitor_size: float = 80.0) -> list[dict]:
+    """Distance-decay Huff share per location. Pure numpy — simple and honest.
 
-    Returns list of {location_id, name, expected_demand, score, capacity?,
-    actual_volume?, comp_count, catchment_pop, rationale}.
+        attraction(own)      = capacity (default 100)
+        attraction(comp j)   = 80 × exp(-distance_j / 800 m)
+        share                = own / (own + Σ decayed competitor attraction)
+        expected_demand      = catchment_pop × share × CONVERSION_RATE
+
+    Uses the REAL competitor distances from competitors_in_radius (the old
+    SQL version treated a competitor at 50 m and one at 480 m identically).
+    Returns the same schema as before: {location_id, name, capacity,
+    actual_volume, catchment_pop, comp_count, share, score, expected_demand,
+    rationale}.
     """
+    import math
+
     if get_settings().demo_mode:
         return canned.huff_scores(locations)
     try:
-        conn = get_duckdb()
-        # Locations table.
-        register_locations(conn, locations)
-        # Per-location catchment population (from population_in_polygon).
-        register_kv_table(
-            conn, "_pop_by_location",
-            rows=[{"location_id": r.get("polygon_id"), "total_pop": int(r.get("total", 0))}
-                  for r in (population or {}).get("per_polygon", [])],
-            columns=[("location_id", "VARCHAR"), ("total_pop", "BIGINT")],
-        )
-        # Competitor counts within each user's catchment.
-        register_kv_table(
-            conn, "_competitors",
-            rows=[{"user_location_id": c.get("nearest_user_location_id")} for c in (competitors or [])],
-            columns=[("user_location_id", "VARCHAR")],
-        )
+        pop_by_loc = {
+            r.get("polygon_id"): int(r.get("total", 0) or 0)
+            for r in (population or {}).get("per_polygon", [])
+        }
+        # Decayed competitive pressure + raw count per user location.
+        pressure: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        for c in competitors or []:
+            uid = c.get("nearest_user_location_id") or c.get("user_location_id")
+            if not uid:
+                continue
+            d = float(c.get("distance_m") or decay_scale_m)
+            pressure[uid] = pressure.get(uid, 0.0) + competitor_size * math.exp(-d / decay_scale_m)
+            counts[uid] = counts.get(uid, 0) + 1
 
-        rows = conn.execute(
-            """
-            WITH comp_counts AS (
-                SELECT user_location_id, COUNT(*) AS comp_count
-                FROM _competitors
-                WHERE user_location_id IS NOT NULL
-                GROUP BY user_location_id
-            ),
-            joined AS (
-                SELECT
-                    u.id          AS location_id,
-                    u.name        AS name,
-                    u.capacity    AS capacity,
-                    u.actual_volume AS actual_volume,
-                    COALESCE(p.total_pop, 0)            AS catchment_pop,
-                    COALESCE(cc.comp_count, 0)          AS comp_count,
-                    COALESCE(u.capacity, 1.0)           AS user_attr,
-                    (COALESCE(cc.comp_count, 0) + 1.0)  AS comp_attr
-                FROM _user_locations u
-                LEFT JOIN _pop_by_location p ON p.location_id = u.id
-                LEFT JOIN comp_counts cc     ON cc.user_location_id = u.id
-            )
-            SELECT
-                location_id, name, capacity, actual_volume,
-                catchment_pop, comp_count,
-                user_attr / (user_attr + comp_attr) AS share,
-                CAST(catchment_pop * (user_attr / (user_attr + comp_attr)) * ? AS BIGINT)
-                  AS expected_demand
-            FROM joined
-            ORDER BY expected_demand DESC
-            """,
-            [CONVERSION_RATE],
-        ).fetchall()
-
-        out = []
-        for (loc_id, name, capacity, actual, pop, ccount, share, expected) in rows:
+        out: list[dict] = []
+        for loc in locations:
+            own = float(loc.capacity) if loc.capacity else default_capacity
+            comp_attr = pressure.get(loc.id, 0.0)
+            share = own / (own + comp_attr) if (own + comp_attr) > 0 else 0.0
+            pop = pop_by_loc.get(loc.id, 0)
+            expected = int(pop * share * CONVERSION_RATE)
+            n_comp = counts.get(loc.id, 0)
             out.append({
-                "location_id": loc_id,
-                "name": name,
-                "capacity": capacity,
-                "actual_volume": actual,
-                "catchment_pop": int(pop or 0),
-                "comp_count": int(ccount or 0),
-                "share": round(float(share or 0), 3),
-                "score": round(float(share or 0), 3),
-                "expected_demand": int(expected or 0),
+                "location_id": loc.id,
+                "name": loc.name,
+                "capacity": loc.capacity,
+                "actual_volume": loc.actual_volume,
+                "catchment_pop": pop,
+                "comp_count": n_comp,
+                "share": round(share, 3),
+                "score": round(share, 3),
+                "expected_demand": expected,
                 "rationale": (
-                    f"{name}: catchment {int(pop or 0):,} residents, "
-                    f"{int(ccount or 0)} competitor branch(es) nearby — "
-                    f"Huff share {float(share or 0):.0%}."
+                    f"{loc.name}: catchment {pop:,} residents, {n_comp} competitor(s) "
+                    f"within 500 m (distance-weighted pressure {comp_attr:.0f}) — "
+                    f"Huff share {share:.0%}."
                 ),
             })
-        log.info("huff_model (DuckDB): %d locations scored.", len(out))
+        out.sort(key=lambda r: -r["expected_demand"])
+        log.info("huff_model (decay): %d locations scored.", len(out))
         return out
-    except Exception as e:
-        log.warning("huff_model DuckDB path failed (%s); using canned scores.", e)
+    except Exception as e:  # noqa: BLE001
+        log.warning("huff_model failed (%s); using canned scores.", e)
         return canned.huff_scores(locations)
 
 

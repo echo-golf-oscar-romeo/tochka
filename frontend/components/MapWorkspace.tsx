@@ -316,7 +316,7 @@ export default function MapWorkspace() {
       <main className="relative flex-1 min-h-0 flex">
         {/* Left: chat (primary, bigger) */}
         <aside className="w-[28rem] shrink-0 border-r border-border bg-canvas flex flex-col h-full overflow-hidden">
-          <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-border">
+          <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-border liquid-glass">
             <div className="text-[10px] uppercase tracking-wider text-muted">Ask the data</div>
             <div className="text-[10px] text-subtle">
               {network ? "Spatial SQL · DuckDB" : "Upload first"}
