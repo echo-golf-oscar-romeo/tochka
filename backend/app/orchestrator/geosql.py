@@ -25,6 +25,7 @@ import json as _json
 
 from app.clients.ddb import (
     ensure_csdi_pois_loaded,
+    ensure_districts_loaded,
     ensure_kontur_loaded,
     ensure_osm_loaded,
     get_duckdb,
@@ -64,7 +65,7 @@ _SQL_BARE = re.compile(
     r"\b((?:WITH|SELECT)\b[\s\S]*?)(?:;|\Z)",
     re.IGNORECASE,
 )
-_MAX_ROWS = 100
+_MAX_ROWS = 300
 _TIMEOUT_MS = 10_000
 
 
@@ -141,12 +142,6 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
        {answer, sql, rows, columns, error?, provider}
     """
     llm = get_llm()
-    if not llm.has_key:
-        return {
-            "answer": "The LLM provider isn't configured (no API key). Set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY and restart the backend.",
-            "sql": None, "rows": [], "columns": [], "error": "no_api_key",
-            "provider": llm.provider,
-        }
 
     # Make sure the DuckDB tables are loaded with this network.
     try:
@@ -154,13 +149,15 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
         ensure_osm_loaded(conn)
         ensure_kontur_loaded(conn)
         ensure_csdi_pois_loaded(conn)
+        ensure_districts_loaded(conn)
         register_locations(conn, network.locations)
     except Exception as e:
         log.warning("Failed to prep DuckDB tables for chat: %s", e)
 
-    # Route intent-detected prompts (OSM fetch, isochrone, H3 aggregation)
-    # to deterministic tools BEFORE the SQL agent. The tools handle their
-    # own narration + layer payload.
+    # Route intent-detected prompts (OSM fetch, isochrone, buffer, H3,
+    # choropleth, and the analytical-method router) to deterministic tools
+    # BEFORE the SQL agent — and before the LLM-key check, since these
+    # tools work entirely without an LLM.
     try:
         tool_result = await maybe_run_tool(network=network, message=user_message)
     except Exception as e:
@@ -169,6 +166,13 @@ async def run_chat_turn(network: Network, history: list[dict], user_message: str
     if tool_result is not None:
         tool_result.setdefault("provider", llm.provider)
         return tool_result
+
+    if not llm.has_key:
+        return {
+            "answer": "The LLM provider isn't configured (no API key). Set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY and restart the backend.",
+            "sql": None, "rows": [], "columns": [], "error": "no_api_key",
+            "provider": llm.provider,
+        }
 
     # ---- Step 1: generate SQL ----
     system = _skill()

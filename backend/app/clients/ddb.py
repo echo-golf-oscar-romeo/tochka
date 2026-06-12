@@ -23,6 +23,7 @@ _conn: duckdb.DuckDBPyConnection | None = None
 _osm_loaded: bool = False
 _kontur_loaded: bool = False
 _csdi_loaded: bool = False
+_districts_loaded: bool = False
 
 
 def get_duckdb() -> duckdb.DuckDBPyConnection:
@@ -46,13 +47,14 @@ def get_duckdb() -> duckdb.DuckDBPyConnection:
 
 
 def close_duckdb() -> None:
-    global _conn, _osm_loaded, _kontur_loaded, _csdi_loaded
+    global _conn, _osm_loaded, _kontur_loaded, _csdi_loaded, _districts_loaded
     if _conn is not None:
         _conn.close()
         _conn = None
         _osm_loaded = False
         _kontur_loaded = False
         _csdi_loaded = False
+        _districts_loaded = False
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +166,64 @@ def hk1980_to_wgs84(points: list[tuple[float, float]],
 
 
 # ---------------------------------------------------------------------------
+# HK district boundaries (18 District Council districts) + populations
+# ---------------------------------------------------------------------------
+
+def _districts_geojson_path() -> Path:
+    return (Path(__file__).resolve().parents[3] / "data" / "csdi" / "hk_districts.geojson").resolve()
+
+
+def ensure_districts_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
+    """Load the 18 HK districts into `hk_districts` with geometry + population.
+
+    Columns: name_en, name_zh, code, geom (GEOMETRY), geojson (VARCHAR — the
+    polygon as a GeoJSON string for layer building), population (DOUBLE —
+    sum of Kontur hexes whose centroid falls inside), area_km2 (DOUBLE).
+    Population requires kontur_pop_hex; loads it first. Idempotent.
+    """
+    global _districts_loaded
+    if _districts_loaded:
+        return True
+    conn = conn or get_duckdb()
+    path = _districts_geojson_path()
+    if not path.exists():
+        log.warning("HK districts GeoJSON missing at %s. Run scripts/fetch_csdi.py.", path)
+        return False
+    ensure_kontur_loaded(conn)
+
+    import json
+    fc = json.loads(path.read_text(encoding="utf-8"))
+    conn.execute("DROP TABLE IF EXISTS hk_districts;")
+    conn.execute(
+        "CREATE TABLE hk_districts (name_en VARCHAR, name_zh VARCHAR, code VARCHAR, "
+        "geom GEOMETRY, geojson VARCHAR, population DOUBLE, area_km2 DOUBLE);"
+    )
+    for f in fc.get("features", []):
+        props = f.get("properties", {}) or {}
+        geom_json = json.dumps(f.get("geometry"))
+        name_en = props.get("District") or props.get("district") or "?"
+        name_zh = props.get("地區")
+        code = props.get("地區號碼")
+        conn.execute(
+            """
+            INSERT INTO hk_districts
+            SELECT ?, ?, ?, g, ?,
+                   COALESCE((SELECT SUM(k.population) FROM kontur_pop_hex k
+                             WHERE ST_Contains(g, ST_Point(k.lng, k.lat))), 0),
+                   -- ST_Area_Spheroid expects lat-first axis order; our
+                   -- GeoJSON is lng-first, so flip before measuring.
+                   ST_Area_Spheroid(ST_FlipCoordinates(g)) / 1e6
+            FROM (SELECT ST_GeomFromGeoJSON(?) AS g)
+            """,
+            [name_en, name_zh, code, geom_json, geom_json],
+        )
+    n, pop = conn.execute("SELECT COUNT(*), SUM(population) FROM hk_districts").fetchone()
+    log.info("Loaded %d HK districts (total population %s).", n, f"{int(pop or 0):,}")
+    _districts_loaded = True
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Kontur population hex (H3 r8) loader
 # ---------------------------------------------------------------------------
 
@@ -228,6 +288,16 @@ def ensure_kontur_loaded(conn: duckdb.DuckDBPyConnection | None = None) -> bool:
                 "CREATE TABLE kontur_pop_hex AS SELECT * FROM read_parquet(?)",
                 [str(parquet)],
             )
+            # Axis-order guard: an old parquet built without always_xy has
+            # lat/lng swapped (lat holds ~114). Detect and swap in place so
+            # downstream spatial joins are never silently wrong.
+            mx = conn.execute("SELECT MAX(lat) FROM kontur_pop_hex").fetchone()[0]
+            if mx is not None and float(mx) > 90.0:
+                log.warning("kontur_pop_hex lat/lng look swapped (max lat=%s) — fixing in place.", mx)
+                conn.execute(
+                    "UPDATE kontur_pop_hex SET lat = lng, lng = lat "
+                    "WHERE lat > 90"
+                )
             n = conn.execute("SELECT COUNT(*) FROM kontur_pop_hex").fetchone()[0]
             log.info("Loaded %d Kontur HK population hexes (real).", n)
             _kontur_loaded = True

@@ -38,6 +38,10 @@ data/kontur/*
 data/csdi/*
 !data/csdi/csdi_pois.parquet
 !data/csdi/hk_districts.geojson
+# Demo sample networks (small CSVs)
+!data/samples/
+data/samples/*
+!data/samples/*.csv
 # DuckDB databases anywhere in the tree
 *.duckdb
 *.duckdb.wal

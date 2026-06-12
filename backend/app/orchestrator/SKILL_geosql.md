@@ -78,6 +78,33 @@ ORDER BY distance_m
 LIMIT 25;
 ```
 
+### `hk_districts` — the 18 District Council districts with population
+Pre-loaded on startup. Official boundaries (HAD) with population already
+aggregated from the Kontur grid — so "population of every district" is a
+plain SELECT, no spatial join needed.
+
+| column     | type     | notes |
+|------------|----------|-------|
+| name_en    | VARCHAR  | e.g. 'Sha Tin', 'Central & Western' |
+| name_zh    | VARCHAR  | Chinese name |
+| code       | VARCHAR  | district letter code (A–T) |
+| geom       | GEOMETRY | polygon — use with ST_Contains(geom, ST_Point(lng, lat)) |
+| geojson    | VARCHAR  | the polygon as a GeoJSON string |
+| population | DOUBLE   | residents (sum of Kontur hexes inside) |
+| area_km2   | DOUBLE   | spheroid area |
+
+```sql
+-- population of every district, densest first
+SELECT name_en, ROUND(population) AS population,
+       ROUND(population / NULLIF(area_km2,0)) AS density_per_km2
+FROM hk_districts ORDER BY population DESC;
+
+-- which district is each of my branches in?
+SELECT u.name, d.name_en AS district
+FROM _user_locations u JOIN hk_districts d
+  ON ST_Contains(d.geom, ST_Point(u.lng, u.lat));
+```
+
 ### Dynamic `osm_<category>` — on-demand POI tables
 When the user asks something like *"find all schools in Hong Kong"*, the chat
 tool router fetches the relevant OSM amenity tag from Overpass and registers

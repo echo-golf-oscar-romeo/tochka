@@ -17,18 +17,47 @@ from app.models.network import Location
 log = logging.getLogger(__name__)
 
 
+# Brand keywords we can recognise in uploaded location names, so a bank
+# analysing its own network doesn't see itself listed as a "competitor".
+_KNOWN_BRANDS = [
+    "bank of china", "boc", "hsbc", "hang seng", "standard chartered",
+    "citibank", "dbs", "icbc", "bank of east asia", "bea", "china construction",
+    "ccb", "bank of communications", "dah sing", "chiyu", "nanyang",
+]
+
+
+def infer_own_brand(locations: list[Location]) -> str | None:
+    """If most uploaded location names share a known bank brand, return it.
+
+    Lets competitor analysis exclude the user's own branches from the OSM
+    competitor set (e.g. a BOC upload shouldn't compete with itself)."""
+    names = [(loc.name or "").lower() for loc in locations if loc.name]
+    if not names:
+        return None
+    for brand in _KNOWN_BRANDS:
+        hits = sum(1 for n in names if brand in n)
+        if hits >= max(2, len(names) // 2):
+            return brand
+    return None
+
+
 async def competitors_in_radius(locations: list[Location], radius_m: int = 500,
-                                categories: tuple[str, ...] = ("bank",)) -> list[dict]:
+                                categories: tuple[str, ...] = ("bank",),
+                                exclude_brand: str | None = None) -> list[dict]:
     """Competitor POIs within `radius_m` of each user location.
 
     SQL pattern:
         for each (user × poi) within ST_Distance_Spheroid <= radius_m,
         keep the nearest user per POI (ROW_NUMBER), filter by category.
+
+    `exclude_brand` (or the brand inferred from the uploaded names) is
+    filtered out so a network never competes with its own branches.
     """
     s = get_settings()
     if s.demo_mode:
         return canned.competitors_in_radius(locations, radius_m)
 
+    own = exclude_brand or infer_own_brand(locations)
     try:
         conn = get_duckdb()
         if not ensure_osm_loaded(conn):
@@ -36,6 +65,12 @@ async def competitors_in_radius(locations: list[Location], radius_m: int = 500,
         users_table = register_locations(conn, locations)
 
         cat_placeholders = ", ".join(["?"] * len(categories))
+        brand_filter = ""
+        if own:
+            brand_filter = (
+                "AND NOT (LOWER(COALESCE(o.brand,'')) LIKE ? "
+                "OR LOWER(COALESCE(o.name,'')) LIKE ?)"
+            )
         sql = f"""
         WITH pairs AS (
             SELECT
@@ -56,7 +91,7 @@ async def competitors_in_radius(locations: list[Location], radius_m: int = 500,
                 ) AS rn
             FROM osm_pois o
             CROSS JOIN {users_table} u
-            WHERE o.type IN ({cat_placeholders})
+            WHERE o.type IN ({cat_placeholders}) {brand_filter}
         )
         SELECT id, name, brand, lat, lng, atm, district,
                user_location_id AS nearest_user_location_id,
@@ -65,7 +100,10 @@ async def competitors_in_radius(locations: list[Location], radius_m: int = 500,
         WHERE rn = 1 AND distance_m <= ?
         ORDER BY distance_m
         """
-        params: list = list(categories) + [radius_m]
+        params: list = list(categories)
+        if own:
+            params += [f"%{own}%", f"%{own}%"]
+        params += [radius_m]
         rows = conn.execute(sql, params).fetchall()
         cols = [d[0] for d in conn.description]
         out = [dict(zip(cols, row, strict=False)) for row in rows]

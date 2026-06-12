@@ -48,7 +48,7 @@ LAYER_PALETTE = [
 # Intent classification
 # ---------------------------------------------------------------------------
 
-Intent = Literal["osm_fetch", "osm_freeform", "isochrone", "h3_aggregate", "buffer"]
+Intent = Literal["osm_fetch", "osm_freeform", "isochrone", "h3_aggregate", "buffer", "choropleth"]
 
 # OSM category → Overpass amenity / shop / tourism tag. Aliases on the right
 # of the colon get normalised to the canonical category on the left.
@@ -143,6 +143,10 @@ def classify(message: str) -> ClassifiedIntent | None:
         return free
 
     # Order matters: try the most specific first.
+    cho = _match_choropleth(msg)
+    if cho is not None:
+        return cho
+
     iso = _match_isochrone(msg)
     if iso is not None:
         return iso
@@ -163,6 +167,41 @@ def classify(message: str) -> ClassifiedIntent | None:
 
 
 _OSM_SLASH_RE = re.compile(r"^\s*/osm\b[:\s]*(?P<query>.+)$", re.IGNORECASE | re.DOTALL)
+
+# Choropleth — "choropleth of population by district", "map population per
+# district", "district population map", "colour the districts by banks", …
+_CHOROPLETH_RE = re.compile(
+    r"\b(choropleth|по\s+районам|district\s+map|map\s+of\s+\w+\s+(?:by|per)\s+district|"
+    r"(?:colou?r|shade)\s+(?:the\s+)?districts?|"
+    r"(?:population|density|banks?|atms?|schools?|\w+)\s+(?:by|per|across)\s+district)",
+    re.IGNORECASE,
+)
+# What metric to map. Defaults to population.
+_CHORO_METRICS = [
+    ("density", "density"),
+    ("population", "population"),
+    ("bank", "banks"),
+    ("atm", "atms"),
+    ("school", "schools"),
+    ("medical", "medical"), ("clinic", "medical"), ("hospital", "medical"),
+    ("transport", "transport"), ("mtr", "transport"),
+    ("commercial", "commercial"), ("shop", "commercial"), ("mall", "commercial"),
+    ("government", "government"),
+    ("recreation", "recreation"), ("park", "recreation"),
+    ("branch", "user_locations"), ("my locations", "user_locations"),
+]
+
+
+def _match_choropleth(msg: str) -> ClassifiedIntent | None:
+    if not _CHOROPLETH_RE.search(msg):
+        return None
+    low = msg.lower()
+    metric = "population"
+    for kw, m in _CHORO_METRICS:
+        if kw in low:
+            metric = m
+            break
+    return ClassifiedIntent("choropleth", {"metric": metric})
 
 
 def _match_osm_freeform(msg: str) -> ClassifiedIntent | None:
@@ -1010,6 +1049,132 @@ async def run_buffer(*, network: Network, subject: str, radius_m: float) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Choropleth tool — district polygons shaded by a metric
+# ---------------------------------------------------------------------------
+
+# Light → saturated gradient anchored on the brand purple. The lightest stop
+# stays visible on the basemap; the darkest reads as "most".
+_CHORO_RAMP = ["#efecff", "#beb2ff", "#7560fb", "#4F35F8", "#27158f"]
+
+
+async def run_choropleth(*, network: Network, metric: str) -> dict[str, Any]:
+    """District choropleth: polygons from `hk_districts` shaded by the metric.
+
+    Metrics: population (default), density (pop/km²), banks/atms (OSM counts
+    per district), any CSDI category (schools, medical, transport, commercial,
+    government, recreation), or user_locations (your branches per district).
+    """
+    import json as _json
+
+    from app.clients.ddb import (
+        ensure_csdi_pois_loaded,
+        ensure_districts_loaded,
+        register_locations,
+    )
+
+    conn = get_duckdb()
+    if not ensure_districts_loaded(conn):
+        return {
+            "answer": "District boundaries aren't loaded — run scripts/fetch_csdi.py first.",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "no_districts",
+        }
+
+    if metric == "population":
+        sql = "SELECT name_en, geojson, ROUND(population) AS value FROM hk_districts"
+        unit, label = "residents", "Population by district"
+    elif metric == "density":
+        sql = ("SELECT name_en, geojson, ROUND(population / NULLIF(area_km2,0)) AS value "
+               "FROM hk_districts")
+        unit, label = "residents / km²", "Population density by district"
+    elif metric in ("banks", "atms"):
+        t = "bank" if metric == "banks" else "atm"
+        sql = (f"SELECT d.name_en, d.geojson, COUNT(o.id) AS value FROM hk_districts d "
+               f"LEFT JOIN osm_pois o ON o.type = '{t}' "
+               f"AND ST_Contains(d.geom, ST_Point(o.lng, o.lat)) "
+               f"GROUP BY d.name_en, d.geojson")
+        unit, label = metric, f"Competitor {metric} by district"
+    elif metric == "user_locations":
+        register_locations(conn, network.locations)
+        sql = ("SELECT d.name_en, d.geojson, COUNT(u.id) AS value FROM hk_districts d "
+               "LEFT JOIN _user_locations u ON ST_Contains(d.geom, ST_Point(u.lng, u.lat)) "
+               "GROUP BY d.name_en, d.geojson")
+        unit, label = "branches", "Your branches by district"
+    else:
+        # CSDI category counts.
+        ensure_csdi_pois_loaded(conn)
+        sql = ("SELECT d.name_en, d.geojson, COUNT(c.geonameid) AS value FROM hk_districts d "
+               "LEFT JOIN csdi_pois c ON c.category = ? "
+               "AND ST_Contains(d.geom, ST_Point(c.lng, c.lat)) "
+               "GROUP BY d.name_en, d.geojson")
+        unit, label = metric, f"{metric.capitalize()} POIs by district (CSDI)"
+
+    try:
+        if metric not in ("population", "density", "banks", "atms", "user_locations"):
+            # map plural chat metric to singular csdi category
+            cat = {"schools": "school"}.get(metric, metric.rstrip("s") if metric.endswith("s") else metric)
+            rows = conn.execute(sql, [cat]).fetchall()
+        else:
+            rows = conn.execute(sql).fetchall()
+    except Exception as e:
+        log.warning("choropleth SQL failed: %s", e)
+        return {
+            "answer": f"Choropleth query failed: {e}",
+            "rows": [], "columns": [], "layer": None, "sql": None,
+            "error": "choropleth_failed",
+        }
+
+    values = [float(r[2] or 0) for r in rows]
+    vmax = max(values) if values else 1.0
+    vmin = min(values) if values else 0.0
+    if vmax <= vmin:
+        vmax = vmin + 1.0
+
+    features = []
+    for name_en, geojson, value in rows:
+        try:
+            geom = _json.loads(geojson)
+        except Exception:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {"name": name_en, "value": float(value or 0)},
+        })
+
+    stops: list[Any] = []
+    for i, colour in enumerate(_CHORO_RAMP):
+        stops += [vmin + (vmax - vmin) * i / (len(_CHORO_RAMP) - 1), colour]
+    layer = {
+        "id": f"choropleth-{metric}",
+        "kind": "geojson",
+        "data": {"type": "FeatureCollection", "features": features},
+        "paint": {
+            "fill-color": ["interpolate", ["linear"], ["get", "value"], *stops],
+            "fill-opacity": 0.55,
+            "line-color": "#FDFDFD",
+            "line-width": 1.2,
+            "line-opacity": 0.9,
+        },
+        "label": label,
+    }
+    ranked = sorted(rows, key=lambda r: -(r[2] or 0))
+    top = ", ".join(f"{r[0]} ({int(r[2] or 0):,})" for r in ranked[:3])
+    answer = (
+        f"{label}: the 18 districts are shaded light→dark by {unit}. "
+        f"Highest: {top}. Click any district for its exact value."
+    )
+    return {
+        "answer": answer,
+        "rows": [{"district": r[0], "value": int(r[2] or 0)} for r in ranked],
+        "columns": ["district", "value"],
+        "sql": None,
+        "layer": layer,
+        "provider": "choropleth",
+    }
+
+
+# ---------------------------------------------------------------------------
 # H3-aggregate tool
 # ---------------------------------------------------------------------------
 
@@ -1180,6 +1345,8 @@ async def maybe_run_tool(*, network: Network, message: str) -> dict[str, Any] | 
             minutes=intent.params["minutes"],
             profile=intent.params["profile"],
         )
+    if intent.kind == "choropleth":
+        return await run_choropleth(network=network, metric=intent.params["metric"])
     if intent.kind == "h3_aggregate":
         return await run_h3_aggregate(network=network, resolution=intent.params["resolution"])
     if intent.kind == "buffer":
