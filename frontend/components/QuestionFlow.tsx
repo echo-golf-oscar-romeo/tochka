@@ -7,18 +7,21 @@ import {
 } from "lucide-react";
 import type { Workflow } from "./WorkspacePanel";
 
-/** One suggested question. Either runs a workflow or sends a chat message. */
+/** One suggested question. Every preset runs a full analysis → report;
+ *  the verbatim question steers the methodologist. */
 interface Suggestion {
   icon: React.ComponentType<{ size?: number | string; className?: string }>;
   label: string;
   question: string;
-  action: { kind: "workflow"; workflow: Workflow } | { kind: "chat"; message: string };
+  archetypes: Workflow[];
 }
 
 interface Props {
   /** Filename + row count for the header chip, e.g. "16 locations · branches.csv" */
   networkSummary: string;
-  onRunWorkflow: (w: Workflow) => void;
+  /** Run the analysis pipeline (methodologist → tools → report). */
+  onAnalyze: (userIntent: string, archetypes: Workflow[]) => void;
+  /** Free-text questions go to the chat agent instead. */
   onAskChat: (message: string) => void;
   onDismiss: () => void;
 }
@@ -28,37 +31,37 @@ const SUGGESTIONS: Suggestion[] = [
     icon: TrendingUp,
     label: "Diagnose performance",
     question: "How is my network performing — and which branches underperform their context?",
-    action: { kind: "workflow", workflow: "diagnose" },
+    archetypes: ["diagnose"],
   },
   {
     icon: MapPin,
     label: "Find where to expand",
     question: "Where should I open next? Show me the demand we don't reach yet.",
-    action: { kind: "workflow", workflow: "expand" },
+    archetypes: ["expand"],
   },
   {
     icon: Scale,
     label: "Rationalise the network",
     question: "Which branches overlap or cannibalise each other — what could we merge?",
-    action: { kind: "workflow", workflow: "rationalise" },
+    archetypes: ["rationalise"],
   },
   {
     icon: Crosshair,
     label: "Optimise coverage",
     question: "Where should I place 5 branches to cover the most residents?",
-    action: { kind: "chat", message: "Where should I place 5 branches to cover the most residents?" },
+    archetypes: ["expand"],
   },
   {
     icon: Search,
     label: "Find look-alike areas",
     question: "Find locations similar to my best-performing branch.",
-    action: { kind: "chat", message: "Find locations similar to my best-performing branch" },
+    archetypes: ["diagnose"],
   },
   {
     icon: Grid3X3,
     label: "Spot the whitespace",
     question: "Show me underserved whitespace — high demand far from any branch.",
-    action: { kind: "chat", message: "Show me the underserved whitespace" },
+    archetypes: ["expand"],
   },
 ];
 
@@ -67,7 +70,7 @@ const SUGGESTIONS: Suggestion[] = [
  * the user wants to find out — free-text first, six suggested intents below.
  * Replaces "pick one of three buttons" with a conversation starter.
  */
-export default function QuestionFlow({ networkSummary, onRunWorkflow, onAskChat, onDismiss }: Props) {
+export default function QuestionFlow({ networkSummary, onAnalyze, onAskChat, onDismiss }: Props) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -81,8 +84,7 @@ export default function QuestionFlow({ networkSummary, onRunWorkflow, onAskChat,
 
   function pick(s: Suggestion) {
     onDismiss();
-    if (s.action.kind === "workflow") onRunWorkflow(s.action.workflow);
-    else onAskChat(s.action.message);
+    onAnalyze(s.question, s.archetypes);
   }
 
   function submitFreeText() {

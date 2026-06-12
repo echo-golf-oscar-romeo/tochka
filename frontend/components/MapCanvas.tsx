@@ -18,10 +18,13 @@ interface Props {
   styleUrl?: string;
   autoFit?: boolean;
   visibility?: Record<string, boolean>;
+  /** false → static thumbnail (no pan/zoom/controls), used inside reports. */
+  interactive?: boolean;
 }
 
 const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
-  { layers, initialCenter = [114.165, 22.33], initialZoom = 11, styleUrl, autoFit = true, visibility },
+  { layers, initialCenter = [114.165, 22.33], initialZoom = 11, styleUrl, autoFit = true,
+    visibility, interactive = true },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +94,7 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
       attributionControl: { compact: true },
       preserveDrawingBuffer: true, // needed for screenshot capture
       transformRequest,
+      interactive,
       // MapLibre's style validator is stricter than the Mapbox style spec.
       // Mapbox styles include extensions (e.g. nested `name` fields inside
       // imports/iconsets) that MapLibre flags as "unknown property", and a
@@ -104,9 +108,11 @@ const MapCanvas = forwardRef<MapCanvasHandle, Props>(function MapCanvas(
     });
     mapRef.current = map;
 
-    // Built-in MapLibre controls — Aino references show these standard.
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: true }), "top-right");
-    map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 110 }), "bottom-right");
+    // Built-in MapLibre controls — skipped for static report thumbnails.
+    if (interactive) {
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: true }), "top-right");
+      map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 110 }), "bottom-right");
+    }
 
     // Errors are logged only — we never auto-swap the style anymore. The
     // earlier auto-swap to FALLBACK_STYLE fired on transient tile 404s and
@@ -324,6 +330,10 @@ function fitToLayers(map: MlMap, layers: StoryLayer[]) {
     if (layer.kind !== "geojson" || !layer.data) continue;
     for (const f of (layer.data as GeoJSON.FeatureCollection).features ?? []) {
       forEachCoord(f.geometry, (lng, lat) => {
+        // Defensive: a feature with swapped/garbage coordinates must not be
+        // allowed to poison the bounds and crash MapLibre's LngLat check.
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+        if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
         if (lng < minLng) minLng = lng;
         if (lat < minLat) minLat = lat;
         if (lng > maxLng) maxLng = lng;

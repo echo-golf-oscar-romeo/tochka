@@ -74,10 +74,13 @@ export default function MapWorkspace() {
     setShowQuestionFlow(true);
   }, []);
 
-  // ----- Run a workflow -----
-  const handleWorkflow = useCallback(async (workflow: Workflow) => {
+  // ----- Run an analysis (methodologist → tools → report) -----
+  const handleAnalyze = useCallback(async (
+    userIntent: string | null,
+    archetypeList: Workflow[],
+  ) => {
     if (!network || busy) return;
-    setActiveWorkflow(workflow);
+    setActiveWorkflow(archetypeList[0] ?? "diagnose");
     setBusy(true);
     setEvents([]);
     setStorymapId(null);
@@ -91,7 +94,11 @@ export default function MapWorkspace() {
     const abort = new AbortController();
     try {
       await analyzeStream(
-        { network_id: network.id, archetypes: ARCHETYPE_BY_WORKFLOW[workflow] },
+        {
+          network_id: network.id,
+          archetypes: archetypeList.flatMap((w) => ARCHETYPE_BY_WORKFLOW[w]),
+          ...(userIntent ? { user_intent: userIntent } : {}),
+        },
         (ev) => {
           if (abort.signal.aborted) return;
           setEvents((prev) => [...prev, ev]);
@@ -305,9 +312,6 @@ export default function MapWorkspace() {
         status={headerStatus}
         detail={lastEventLine ?? undefined}
         busy={busy}
-        activeWorkflow={activeWorkflow}
-        onRunWorkflow={handleWorkflow}
-        workflowsDisabled={!network || busy}
       />
       <main className="relative flex-1 min-h-0 flex">
         {/* Left: chat (primary, bigger) */}
@@ -374,7 +378,7 @@ export default function MapWorkspace() {
           {showQuestionFlow && network && (
             <QuestionFlow
               networkSummary={networkSummary ?? `${network.locations.length} locations`}
-              onRunWorkflow={handleWorkflow}
+              onAnalyze={handleAnalyze}
               onAskChat={handleAskChat}
               onDismiss={() => setShowQuestionFlow(false)}
             />
@@ -396,6 +400,7 @@ export default function MapWorkspace() {
           networkId={network?.id ?? null}
           networkSummary={networkSummary}
           onUpload={() => setShowUpload(true)}
+          onCreateReport={() => setShowQuestionFlow(true)}
           busy={busy}
           layers={layers}
           layerVisibility={layerVisibility}
@@ -524,16 +529,18 @@ function deriveNetworkSummary(net: UploadResponse | null): string | null {
 function deriveSuggestions(net: UploadResponse | null): string[] {
   if (!net || net.locations.length === 0) return [];
   const first = net.locations.find((l) => l.name) || net.locations[0];
-  const second = net.locations.find((l) => l.id !== first.id && l.name);
-  const out = [
+  // Curated to show the breadth: choropleth, optimisation, statistics,
+  // OSM fetch, buffers, look-alikes — not just SQL counts.
+  return [
+    "Population by district as a choropleth",
     `Which 10 competitor banks are closest to ${first.name}?`,
-    `Show all branches with their nearest competitor distance.`,
-    `How many competitor banks sit within 500m of each of my branches?`,
+    "Where should I place 5 branches to cover the most residents?",
+    "Show me the underserved whitespace",
+    "Create a 500m buffer around every branch",
+    "Find all the schools in Hong Kong and add them to the map",
+    "Find hot spots and cold spots of branch volume",
+    `Find locations similar to ${first.name}`,
   ];
-  if (second) {
-    out.push(`Compare ${first.name} and ${second.name}: catchment population and competitor count.`);
-  }
-  return out;
 }
 
 
