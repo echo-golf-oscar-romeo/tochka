@@ -336,7 +336,7 @@ function DonutBlock({ spec }: { spec: ChartSpec }) {
       </div>
       <ul className="flex-1 min-w-0 space-y-1.5">
         {data.map((d, i) => (
-          <li key={d.label} className="flex items-center gap-2 text-[11.5px]">
+          <li key={`${d.label}-${i}`} className="flex items-center gap-2 text-[11.5px]">
             <span className="inline-block h-2.5 w-2.5 rounded-[3px] shrink-0" style={{ background: SERIES[i % SERIES.length] }} />
             <span className="text-ink/85 truncate flex-1">{d.label}</span>
             <span className="text-muted tabular-nums">{Math.round((d.value / total) * 100)}%</span>
@@ -377,7 +377,9 @@ function RankBlock({ spec, accent }: { spec: ChartSpec; accent: string }) {
   return (
     <ol className="space-y-2">
       {data.map((d, i) => (
-        <li key={d.label} className="flex items-center gap-2.5 text-[12px]">
+        // Index in the key: real datasets (e.g. the BOC sample) contain
+        // multiple branches with identical display names.
+        <li key={`${d.label}-${i}`} className="flex items-center gap-2.5 text-[12px]">
           <span className="w-4 text-right tabular-nums text-subtle">{i + 1}</span>
           <span className="w-28 truncate text-ink/85" title={d.label}>{d.label}</span>
           <span className="flex-1 h-1.5 rounded-full bg-rule overflow-hidden">
