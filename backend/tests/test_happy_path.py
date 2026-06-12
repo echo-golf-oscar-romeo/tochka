@@ -62,5 +62,6 @@ def test_upload_then_storymap():
     r = client.get(f"/storymap/{storymap_id}")
     assert r.status_code == 200, r.text
     sm = r.json()
-    assert len(sm["sections"]) == 5
+    # 5 base sections; dynamic methodologies may add a findings section.
+    assert len(sm["sections"]) >= 5
     assert sm["network_id"] == network_id
